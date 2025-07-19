@@ -1,17 +1,18 @@
-#include <stdio.h>
-#include <time.h>
-#include <limits.h>
 #include <assert.h>
+#include <limits.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
 
 #include "tm.h"
 
-#define UNUSED(x) ((void) (x))
+// Upper limit on number of steps. NB not a hard limit, may be exceeded by up to BATCH_STEPS - 1.
+const int MAX_STEPS = (INT_MAX >> 4);
+// Number of steps before we perform some consistency checks
+const int BATCH_STEPS = 1000;
 
-/* Upper limit on number of steps.
- */
-#define MAX_STEPS (INT_MAX >> 4)
-
-double seconds(clock_t t1, clock_t t0) {
+double seconds(clock_t t1, clock_t t0)
+{
 	return ((double) (t1 - t0)) / CLOCKS_PER_SEC;
 }
 
@@ -21,44 +22,75 @@ struct test_case_t {
 	int nonzero;
 };
 
+// Defined below
 const struct test_case_t TEST_CASES[];
 const int N_TEST_CASES;
 
-void verify_test_cases() {
-	for (int i = 0; i < N_TEST_CASES; i++) {
-		const struct test_case_t *const tcase = TEST_CASES + i;
+void verify_test_case(const struct test_case_t *const tcase, int quiet)
+{
+	clock_t t = clock();
+	struct tm_def_t *def = tm_def_parse(tcase->txt);
+	if (!quiet) printf("Parsed in %fs\n", seconds(clock(), t));
 
-		clock_t t = clock();
-		struct tm_def_t *def = tm_def_parse(tcase->txt);
-		printf("Parsed in %fs\n", seconds(clock(), t));
-
+	if (!quiet) {
 		printf("%s\n", tcase->txt);
 		tm_def_print(def);
-
-		t = clock();
-		struct tm_run_t *run = tm_run_init(def);
-		printf("Initialized in %fs\n", seconds(clock(), t));
-
-		t = clock();
-		tm_run_steps(run, MAX_STEPS);
-		printf("Ran %d steps in %fs\n", run->steps, seconds(clock(), t));
-
-		assert(run->steps == tcase->steps);
-		printf("Test case %d/%d is OK!\n", i + 1, N_TEST_CASES);
-
-		tm_run_free(run);
-		tm_def_free(def);
 	}
+
+	t = clock();
+	struct tm_run_t *run = tm_run_init(def);
+	if (!quiet) printf("Initialized in %fs\n", seconds(clock(), t));
+
+	t = clock();
+	while (1) {
+		tm_run_steps(run, BATCH_STEPS);
+		int cmp = tm_mixed_tape_cmp(run->rle_tape, run->flat_tape);
+		assert(cmp == TAPES_EQUAL);
+		if (tm_run_halted(run))
+			break;
+		if (run->steps >= MAX_STEPS)
+			break;
+	}
+	if (!quiet) printf("Ran %d steps in %fs\n", run->steps, seconds(clock(), t));
+
+	assert(tm_run_halted(run));
+
+	assert(run->steps == tcase->steps);
+	if (!quiet) printf("Test case is OK!\n");
+
+	tm_run_free(run);
+	tm_def_free(def);
+}
+
+void unknown_argument(const char *arg0, const char *arg) {
+	(void) fprintf(stderr, "Unknown argument '%s'.\n", arg);
+	(void) fprintf(stderr, "Usage: %s [-q]\n", arg0);
+	(void) fprintf(stderr, "\t-q\tQuiet, print no output.\n");
 }
 
 int main(int argc, char **argv) {
-	UNUSED(argc);
-	UNUSED(argv);
-	printf("Verifying test cases...\n");	
-	verify_test_cases();
+	int quiet = 0;
+	for (int i = 1; i < argc; i++) {
+		size_t len = strlen(argv[i]);
+		if (len != 2 || argv[i][0] != '-') {
+			unknown_argument(argv[0], argv[i]);
+			return 1;
+		}
+		switch (argv[i][1]) {
+		case 'q':
+			quiet = 1;
+			break;
+		default:
+			unknown_argument(argv[0], argv[i]);
+			return 1;
+		}
+	}
+	if (!quiet) printf("Verifying test cases...\n");
+	for (int i = 0; i < N_TEST_CASES; i++) {
+		verify_test_case(TEST_CASES + i, quiet);
+	}
 	return 0;
 }
-
 
 /* A list of small test cases taken from wiki.bbchallenge.org
  */
