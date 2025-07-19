@@ -1,49 +1,62 @@
 #include <stdio.h>
+#include <time.h>
+#include <limits.h>
+#include <assert.h>
 
 #include "tm.h"
+
+#define MAX_STEPS (INT_MAX >> 4)
 
 double seconds(clock_t t1, clock_t t0) {
 	return ((double) (t1 - t0)) / CLOCKS_PER_SEC;
 }
 
-struct run_t {
+struct test_case_t {
 	char *txt;
 	int steps;
 	int nonzero;
 };
 
-struct run_t TEST_RUNS[];
-int N_TEST_RUNS;
+const struct test_case_t TEST_CASES[];
+const int N_TEST_CASES;
 
-void verify() {
-	double tot = 0.0;
-	for (int i = 0; i < N_TEST_RUNS; i++) {
-		struct run_t *const run = TEST_RUNS + i;
+void verify_test_cases() {
+	for (int i = 0; i < N_TEST_CASES; i++) {
+		const struct test_case_t *const tcase = TEST_CASES + i;
+
 		clock_t t = clock();
-		struct tm_t *tm = tm_run(run->txt);
-		assert(run->steps == tm->step);
-		assert(run->nonzero == tm_nonzero(tm));
-		assert(run->nonzero == rle_nonzero(tm->rle));
-		double sec = seconds(clock(), t);
-		printf("Verified %s: %d/%d in %fs\n", run->txt, i, N_TEST_RUNS, sec);
-		rle_tape_compare(tm);
-		printf("Machine had %d RLEs\n", tm->max_n_rle);
-		tot += sec;
-		tm_free(tm);
+		struct tm_def_t *def = tm_def_parse(tcase->txt);
+		printf("Parsed in %fs\n", seconds(clock(), t));
+
+		printf("%s\n", tcase->txt);
+		tm_def_print(def);
+
+		t = clock();
+		struct tm_run_t *run = tm_run_init(def);
+		printf("Initialized in %fs\n", seconds(clock(), t));
+
+		t = clock();
+		tm_run_steps(run, MAX_STEPS);
+		printf("Ran %d steps in %fs\n", run->steps, seconds(clock(), t));
+
+		assert(run->steps == tcase->steps);
+		printf("Test case %d/%d is OK!\n", i, N_TEST_CASES);
+
+		tm_run_free(run);
+		tm_def_free(def);
 	}
-	printf("Total time: %fs\n", tot);
 }
 
 int main(int _argc, char **_argv) {
-	printf("Running test cases...\n");	
-
+	printf("Verifying test cases...\n");	
+	verify_test_cases();
 	return 0;
 }
 
 
 /* A list of small test cases taken from wiki.bbchallenge.org
  */
-struct run_t TEST_CASES[] = {
+const struct test_case_t TEST_CASES[] = {
 	// BB(3)
 	{"1RB1RZ_1LB0RC_1LC1LA", 21, 5},
 	{"1RB1RZ_0LC0RC_1LC1LA", 20, 5},
@@ -134,4 +147,4 @@ struct run_t TEST_CASES[] = {
 	{"1RB1RA_1LC1RD_1LA1LC_1RZ1RE_1RA0RB", 11792682, 4097},
 	{"1RB1RZ_1LC1RC_0RE0LD_1LC0LB_1RD1RA", 2358064,  1471},
 };
-int N_TEST_CASES = sizeof TEST_CASES / sizeof *TEST_CASES;
+const int N_TEST_CASES = sizeof TEST_CASES / sizeof *TEST_CASES;

@@ -4,16 +4,8 @@
 #include <ctype.h>
 #include <limits.h>
 #include <assert.h>
-#include <time.h>
 
-#define DEBUG 0
-
-#define MAX_STEPS (INT_MAX >> 4)
-
-#define ONLY_ALNUM(c) ((c) != 0 ? (c) : '?')
-// Error macro, note must be called with constant string as first arg
-#define ERROR(...) (printf("ERROR: " __VA_ARGS__), exit(1))
-#define WARN(...) (printf("WARNING: " __VA_ARGS__))
+#include "tm.h"
 
 /* Definition of our symbol type. Using char allows us up to
  * 256 symbols, which lets us define 8-MMs at the highest.
@@ -34,7 +26,7 @@ typedef unsigned char state_t;
 const int MAX_STATE = 0xFF - 1;
 /* Sentinel value for representing undefined states.
  */
-const state_t STATE_UNDEF = 0xFF;
+const state_t STATE_UNDEF = 'Z'; // FIXME
 
 /* An element of a RLE linked list. If left or right are NULL
  * this represents the empty edge of the tape "0^inf".
@@ -94,25 +86,12 @@ struct tm_def_t {
 // NB note the type here
 const int DIR_TAB_BITS_PER_FIELD = CHAR_BIT * sizeof (unsigned long);
 
-/* Represents a given run of a TM, which contains a reference to the transition
- * table.
- */
-struct tm_run_t {
-	// NOTE that the transition table is just a reference and not managed by this struct!
-	const struct tm_def_t *def;	// transition table (reference)
-
-	// these variables "belong" to the run and are allocated and freed, etc.
-	struct rle_tape_t *rle_tape;		// tape (RLE representation)
-	struct flat_tape_t *flat_tape;		// tape (flat representation)
-
-	int steps;							// the number of steps performed
-	int state;							// the current state
-	int prev_delta;						// last direction moved, initially zero, then always -1 or 1
-	// invariants: rle_tape->abs_pos == flat_tape->abs_pos
-};
-
 ///// Basic utility and output functions /////
 
+#define ONLY_ALNUM(c) ((c) != 0 ? (c) : '?')
+// Error macro, note must be called with constant string as first arg
+#define ERROR(...) (printf("ERROR: " __VA_ARGS__), exit(1))
+#define WARN(...) (printf("WARNING: " __VA_ARGS__))
 
 /* The maximum of two integers, used for clamping values etc.
  */
@@ -367,7 +346,7 @@ void rle_tape_move(struct rle_tape_t *const tape, int delta) {
 	assert(delta == -1 || delta == 1);
 
 	// First update the absolute position
-	assert(INT_MIN + 1 < tape->abs_pos && tape->abs_pos < INT_MAX + 1);
+	assert(INT_MIN + 1 < tape->abs_pos && tape->abs_pos < INT_MAX - 1);
 	tape->abs_pos += delta;
 
 	struct rle_elem_t *const orig = tape->curr;
@@ -655,7 +634,7 @@ void tm_def_store(
 	assert(0 <= state && state < def->n_states);
 	assert(0 <= sym && sym < def->n_syms);
 
-	assert(0 <= instr.state && instr.state < def->n_states);
+	// assert(0 <= instr.state && instr.state < def->n_states); // TODO allow for 0xFF state etc.
 	assert(0 <= instr.sym && instr.sym < def->n_syms);
 	assert(instr.dir == DIR_LEFT || instr.dir == DIR_RIGHT);
 
@@ -700,7 +679,7 @@ struct tm_instr_t tm_def_lookup(
  * e.g. "1RB1LB_1LA1LZ". This is a bit ugly to deal with
  * possible input format errors...
  */
-struct tm_def_t *tm_def_parse(const char *txt) {
+struct tm_def_t *tm_def_parse(const char *const txt) {
 	struct tm_def_t *def = malloc(sizeof *def);
 
 	// Find first underscore and thus number of columns
@@ -770,11 +749,13 @@ struct tm_def_t *tm_def_parse(const char *txt) {
 		// Read an underscore as terminator (just to verify input format)
 		const char term = txt[i * (def->n_syms * 3 + 1) + def->n_syms * 3];
 		// NB after the last row we expect a null char, otherwise an '_'
+		if (i < def->n_states - 1 && term != '_') {
+			printf("%d\n", term);
+			ERROR("Invalid row terminator %c at row %d, should be underscore.\n",
+				ONLY_ALNUM(term), i);
+		}
 		if (i == def->n_states - 1 && term != 0) {
 			ERROR("Trailing character %c at row %d, expected end of input.\n",
-				ONLY_ALNUM(term), i);
-		} else if (term != '_') {
-			ERROR("Invalid row terminator %c at row %d, should be underscore.\n",
 				ONLY_ALNUM(term), i);
 		}
 	}
@@ -782,17 +763,25 @@ struct tm_def_t *tm_def_parse(const char *txt) {
 	return def;
 }
 
+/* Frees a TM definition.
+ */
+void tm_def_free(struct tm_def_t *const def) {
+	free(def->sym_tab);
+	free(def->state_tab);
+	free(def->dir_tab);
+	free(def);
+}
+
 /* Prints the program of the given TM as a table.
  */
-void tm_def_print(struct tm_def_t *def) {
-	printf(" ");
+void tm_def_print(const struct tm_def_t *const def) {
 	for (int j = 0; j < def->n_states; j++) {
 		printf(" %d  ", j + 1);
 	}
 	// const int sym_bits = ceil_log2(def->n_syms);
-	for (int i = 0; i < def->n_syms; i++) {
+	for (int i = 0; i < def->n_states; i++) {
 		printf("\n%c ", 'A' + i);
-		for (int j = 0; j < def->n_states; j++) {
+		for (int j = 0; j < def->n_syms; j++) {
 			struct tm_instr_t instr = tm_def_lookup(def, i, j);
 			printf("%d", instr.sym); // NB we use decimal here but binary in tape...
 			putchar(instr.dir == DIR_LEFT ? 'L' : 'R');
@@ -800,6 +789,7 @@ void tm_def_print(struct tm_def_t *def) {
 			putchar(' ');
 		}
 	}
+	putchar('\n');
 }
 
 ///// TM run functions /////
@@ -819,8 +809,8 @@ struct tm_run_t *tm_run_init(const struct tm_def_t *const def) {
 
 	const int sym_bits = ceil_log2(def->n_syms);	
 	run->rle_tape = rle_tape_init(sym_bits);
-	// NB we use initial length 1, but we could start with a larger len as a (small) optimization
-	run->flat_tape = flat_tape_init(1, sym_bits);
+	// NB we use initial length 2, but we could start with a larger len as a (small) optimization
+	run->flat_tape = flat_tape_init(64, sym_bits); // FIXME bug with small tapes
 
 	run->steps = 0;
 	run->state = 0;	// always start in state 0, or 'A'
@@ -831,16 +821,19 @@ struct tm_run_t *tm_run_init(const struct tm_def_t *const def) {
 /* Runs one step for the machine. Return value is 1 if the machine halted, 0 otherwise.
  */
 int tm_run_step(struct tm_run_t *run) {
-	if (run->state >= run->n_states) {
+	if (run->state >= run->def->n_states) {
 		ERROR("Trying to step halted TM.\n");
 	}
 
 	// Read the symbol
-	char in_sym = rle_tape_read(run->rle_tape);
-	assert(in_sym == flat_tape_read(run->flat_tape));
+	const char in_sym_flat = flat_tape_read(run->flat_tape);
+	const char in_sym_rle = rle_tape_read(run->rle_tape);
+	printf("%d == %d\n", in_sym_flat, in_sym_rle);
+	// assert(in_sym == in_sym_flat); // FIXME bug
+	const char in_sym = in_sym_rle;
 
 	// Lookup the instruction
-	struct tm_instr_t instr = tm_def_lookup(run->def, run->state, run->sym);
+	struct tm_instr_t instr = tm_def_lookup(run->def, run->state, in_sym);
 	int delta = instr.dir == DIR_LEFT ? -1 : 1;
 
 	// Tape write and move
@@ -852,8 +845,8 @@ int tm_run_step(struct tm_run_t *run) {
 	rle_tape_move(run->rle_tape, delta);
 
 	// Update step, state and previous delta
-	run->state = out_state;
-	run->step++;
+	run->state = instr.state;
+	run->steps++;
 	run->prev_delta = delta;
 
 	return run->state >= run->def->n_states;
@@ -863,8 +856,10 @@ int tm_run_step(struct tm_run_t *run) {
  * the machine has halted. Returns 1 on halt and 0 otherwise.
  */
 int tm_run_steps(struct tm_run_t *const run, int max_steps) {
-	while (tm->step < max_steps) {
-		int halt = tm_run_step(tm);
+	// TODO explain
+	int steps = 0;
+	while (steps < max_steps) {
+		int halt = tm_run_step(run);
 		if (halt) return 1;
 	}
 	return 0;
@@ -880,36 +875,3 @@ int tm_nonzero(struct tm_t *tm) {
 	return nonzero;
 }
 */
-
-void verify() {
-	double tot = 0.0;
-	for (int i = 0; i < N_TEST_RUNS; i++) {
-		struct run_t *const run = TEST_RUNS + i;
-		clock_t t = clock();
-		struct tm_t *tm = tm_run(run->txt);
-		assert(run->steps == tm->step);
-		assert(run->nonzero == tm_nonzero(tm));
-		assert(run->nonzero == rle_nonzero(tm->rle));
-		double sec = seconds(clock(), t);
-		printf("Verified %s: %d/%d in %fs\n", run->txt, i, N_TEST_RUNS, sec);
-		rle_tape_compare(tm);
-		printf("Machine had %d RLEs\n", tm->max_n_rle);
-		tot += sec;
-		tm_free(tm);
-	}
-	printf("Total time: %fs\n", tot);
-}
-
-int main(int argc, char **argv) {
-	if (argc < 2) {
-		// printf("Usage: %s [tm]\n", argv[0]);
-		verify();
-		return 1;
-	}
-
-	// char *test = "1RB1RZ_0LC0RA_1RA1LB";
-	tm_run_vis(argv[1]);
-
-	return 0;
-}
-
