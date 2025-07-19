@@ -1,13 +1,21 @@
+CFLAGS=-O3 -ffast-math -Wall -Wextra -std=c99
+
 all: bin/tm
 
-test: bin/tm
-	leaks --atExit -- bin/tm
+check: tm.c
+	# clang-format --dry-run -Werror tm.c
+	# clang-tdiy tm.c
 
-bin/%: %.c bin/
-	gcc -O3 -Wall -Wextra -std=c99 $< -o $@
+bin/test: bin/test.o bin/tm.o
+	clang $(CFLAGS) $^ -o $@
+	# test for memory leaks, OSX specific (can also use e.g. valgrind)
+	leaks --atExit -- bin/test
+
+bin/%.o: %.c bin/
+	clang $(CFLAGS) $< -o $@
 
 bin/:
 	mkdir bin/
 
 clean:
-	rm bin/*
+	rm -r bin/

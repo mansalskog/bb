@@ -10,162 +10,334 @@
 
 #define MAX_STEPS (INT_MAX >> 4)
 
-#define INIT_TAPE_LEN 1024
-// Print this much either side of the tape head
-#define PRINT_TAPE_CTX 5
-// Print this much either side of the tape head
-#define LOG_TAPE_CTX 20
-
 #define ONLY_ALNUM(c) ((c) != 0 ? (c) : '?')
 // Error macro, note must be called with constant string as first arg
 #define ERROR(...) (printf("ERROR: " __VA_ARGS__), exit(1))
 #define WARN(...) (printf("WARNING: " __VA_ARGS__))
 
-struct rle_t {
-	struct rle_t *left;
-	struct rle_t *right;
-	char sym;
-	int len;
+/* Definition of our symbol type. Using char allows us up to
+ * 256 symbols, which lets us define 8-MMs at the highest.
+ */
+typedef unsigned char sym_t;
+// NB. max sym bits should always fit in an int.
+const int MAX_SYM_BITS = (int) (CHAR_BIT * sizeof (sym_t));
+
+/* Move direction representation, is actually only a single bit.
+ */
+typedef unsigned char dir_t;
+#define DIR_LEFT 0
+#define DIR_RIGHT 1
+
+/* Definition of our state type. This allows us up to 256 states.
+ */
+typedef unsigned char state_t;
+const int MAX_STATE = 0xFF - 1;
+/* Sentinel value for representing undefined states.
+ */
+const state_t STATE_UNDEF = 0xFF;
+
+/* An element of a RLE linked list. If left or right are NULL
+ * this represents the empty edge of the tape "0^inf".
+ */
+struct rle_elem_t {
+	struct rle_elem_t *left;	// the left neighbor (may be NULL);
+	struct rle_elem_t *right;	// the right neighbor (may be NULL)
+	sym_t sym;					// the symbol
+	int len;					// length of the run, always positive
 };
 
-struct tm_t {
-	char *prog;
-	int syms;
-	int states;
-
-	char *tape;
-	int tape_len;
-
-	int pos;
-	char state;
-	int step;
-	int halt;
-
-	struct rle_t *rle;
-	int rle_pos;
-	int max_n_rle; // For debugging
+/* A run-length encoding based tape representation as
+ * a linked list of runs of repeating symbols.
+ */
+struct rle_tape_t {
+	struct rle_elem_t *curr; // current element
+	int rle_pos; 			// relative position within the RLE
+	int abs_pos;			// absolute position (0 = starting)
+	int sym_bits; 		// the width of one symbol in bits (must be <= MAX_SYM_BITS)
 };
 
-// RLE functions
+/* A flat tape that automatically expands (by doubling the size) if we run off the edge.
+ */
+struct flat_tape_t {
+	sym_t *syms;	// symbol memory array
+	int len;		// length of the full tape
+	int mem_pos;	// memory position (0 = first symbol of array)
+	int abs_pos;	// absolute position (0 = TM starting position)
+	int sym_bits;	// the width of one symbol in bits (must be <= MAX_SYM_BITS)
+	// invariants: len % 2 == 0, rel_pos == abs_pos + len / 2
+};
 
-void rle_free(struct rle_t *rle) {
-	while (rle->left) rle = rle->left;
-	while (rle) {
-		struct rle_t *next = rle->right;
-		free(rle);
-		rle = next;
+
+/* Represents an "instruction" in the transition table.
+ */
+struct tm_instr_t {
+	sym_t sym;		// the symbol to write
+	dir_t dir;		// the move direction; it is only one bit
+	state_t state;	// the next state to enter
+};
+
+/* A definition of a Turing Machine transition table, as a static structure.
+ * The function is (in_state, in_sym) -> (out_state, out_sym, move_dir) where
+ * idx = in_state * n_syms + in_sym
+ * out_state = state_tab[idx]
+ * out_sym = sym_tab[idx]
+ * move_dir = (move_dirs[idx / DIR_TAB_BITS_PER_FIELD] >> (idx % DIR_TAB_BITS_PER_FIELD)) & 1;
+ * Note that we can get sym_bits from a tm_def_t by sym_bits = ceil_log2(n_syms)
+ */
+struct tm_def_t {
+	sym_t *sym_tab;				// symbol transition table
+	state_t *state_tab;			// state transition table
+	unsigned long *dir_tab;		// direction table as packed bit-fields
+	int n_syms;					// number of symbols
+	int n_states;				// number of states
+};
+// NB note the type here
+const int DIR_TAB_BITS_PER_FIELD = CHAR_BIT * sizeof (unsigned long);
+
+/* Represents a given run of a TM, which contains a reference to the transition
+ * table.
+ */
+struct tm_run_t {
+	// NOTE that the transition table is just a reference and not managed by this struct!
+	const struct tm_def_t *def;	// transition table (reference)
+
+	// these variables "belong" to the run and are allocated and freed, etc.
+	struct rle_tape_t *rle_tape;		// tape (RLE representation)
+	struct flat_tape_t *flat_tape;		// tape (flat representation)
+
+	int steps;							// the number of steps performed
+	int state;							// the current state
+	int prev_delta;						// last direction moved, initially zero, then always -1 or 1
+	// invariants: rle_tape->abs_pos == flat_tape->abs_pos
+};
+
+///// Basic utility and output functions /////
+
+
+/* The maximum of two integers, used for clamping values etc.
+ */
+int maximum(const int a, const int b) {
+	return a > b ? a : b;
+}
+
+/* Calculates how many bits are needed to fit a value, e.g. ceil_log2(7) = 3.
+ * Mathematically, this is equivalent to ceil(log2(n)) or the number m such that
+ * n >> m == 0.
+ */
+int ceil_log2(int n) {
+	assert(n >= 0); // Only valid for non-negative integers
+	int shift = 0;
+	while (n >> shift > 0) shift++;
+	return shift;
+}
+
+/* Prints a state as a letter from A to Z. This means we only
+ * support up to 26 states. We probably don't need more, but
+ * if we do we have to invent a format for them.
+ */
+void state_alph_print(const state_t state) {
+	const char c = 'A' + state;
+	if (c > 'Z') {
+		ERROR(
+			"Can currently only print states A-Z (0-%d), tried to print %d.",
+			'A' - 'Z',
+			state);
+	}
+	putchar(c);
+}
+
+/* Prints a symbol as a string of binary digits to stdout.
+ * The width is fixed (leading zeros included).
+ */
+void sym_bin_print(const sym_t sym, const int sym_bits) {
+	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
+	for (int i = sym_bits - 1; i >= 0; i--) {
+		// Don't bother shifting down because we only care if zero or not
+		const sym_t bit = sym & (1 << i);
+		putchar(bit ? '1' : '0');
 	}
 }
 
-struct rle_t *rle_init() {
-	struct rle_t *rle = malloc(sizeof *rle);
-	rle->left = NULL;
-	rle->right = NULL;
-	rle->sym = '0';
-	rle->len = 1;
-	return rle;
+
+///// RLE functions /////
+
+/* Frees a RLE tape together with all its elements.
+ */
+void rle_tape_free(struct rle_tape_t *const tape) {
+	struct rle_elem_t *elem = tape->curr;
+	// Move to the leftmost elem
+	while (elem->left) elem = elem->left;
+	// Free each element
+	while (elem) {
+		struct rle_elem_t *next = elem->right;
+		free(elem);
+		elem = next;
+	}
+	// Free container struct
+	free(tape);
 }
 
-void rle_print_run(char sym, int len, char sep) {
-	if (len == 1) printf("%c%c", sym, sep);
-	else printf("%c^%d%c", sym, len, sep);
+/* Constructs an "initial" RLE element, which has no left or right
+ * neighbor, with the given symbol and length.
+ */
+struct rle_elem_t *rle_elem_init(const sym_t sym, const int len) {
+	struct rle_elem_t *elem = malloc(sizeof *elem);
+	elem->left = NULL;
+	elem->right = NULL;
+	elem->sym = sym;
+	elem->len = len;
+	return elem;
 }
 
-void tm_rle_print(struct rle_t *rle, int rle_pos, char state) {
-	struct rle_t *const orig = rle;
-	while (rle->left) rle = rle->left;
-	printf("..0 ");
+/* Constructs a new blank tape using RLE representation, for
+ * a given symbol width.
+ */
+struct rle_tape_t *rle_tape_init(const int sym_bits) {
+	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
+
+	struct rle_tape_t *tape = malloc(sizeof *tape);
+	tape->curr = rle_elem_init(0, 1);
+	tape->rle_pos = 0;
+	tape->abs_pos = 0;
+	tape->sym_bits = sym_bits;
+	return tape;
+}
+
+/* Prints an entire RLE tape.
+ */
+void rle_tape_print(
+		const struct rle_tape_t *const tape,
+		const state_t state,
+		const int prev_delta) {
+	const struct rle_elem_t *elem = tape->curr;
+	// Move to the leftmost elem
+	while (elem->left) elem = elem->left;
+
+	printf("... ");
 	do {
-		if (orig == rle) {
-			if (rle_pos > 0) rle_print_run(rle->sym, rle_pos, '_');
-			int right_len = rle->len - rle_pos - 1;
-			printf("[%c]%c%c", rle->sym, state, right_len > 0 ? '_' : ' ');
-			if (right_len > 0) rle_print_run(rle->sym, right_len, ' ');
+		if (elem == tape->curr) {
+			// Print tape head within element
+			// NB here we use '_' instead of ' ' for separators
+			const int left_len = tape->rle_pos;
+			const int right_len = elem->len - tape->rle_pos - 1;
+
+			// Before tape head
+			if (left_len > 0) {
+				sym_bin_print(elem->sym, tape->sym_bits);
+				printf("^%d_", left_len);
+			}
+
+			// Tape head and state
+			if (prev_delta == -1) {
+				sym_bin_print(elem->sym, tape->sym_bits);
+				putchar('<');
+				state_alph_print(state);
+			} else if (prev_delta == 1) {
+				state_alph_print(state);
+				putchar('>');
+				sym_bin_print(elem->sym, tape->sym_bits);
+			} else {
+				// special case for non-started TMs (before first step)
+				assert(prev_delta == 0);
+
+				sym_bin_print(elem->sym, tape->sym_bits);
+				putchar('[');
+				state_alph_print(state);
+				putchar(']');
+			}
+			putchar(right_len > 0 ? '_' : ' ');
+
+			// After tape head
+			if (right_len > 0) {
+				sym_bin_print(elem->sym, tape->sym_bits);
+				printf("^%d ", right_len);
+			}
 		} else {
-			rle_print_run(rle->sym, rle->len, ' ');
+			// Print the entire element
+			sym_bin_print(elem->sym, tape->sym_bits);
+			printf("^%d ", elem->len);
 		}
-		rle = rle->right;
-	} while (rle);
-	printf("0..");
-	putchar('\n');
+		elem = elem->right;
+	} while (elem);
+	printf("...\n");
+}
+
+/* Shrinks the given element by one symbol. If the length
+ * is zero it is removed from the tape and its neighbors
+ * are linked instead. The element's memory is then freed.
+ */
+void rle_elem_shrink(struct rle_elem_t *const elem) {
+	elem->len--;
+	if (elem->len <= 0) {
+		if (elem->left) elem->left->right = elem->right;
+		if (elem->right) elem->right->left = elem->left;
+		free(elem);
+	}
+}
+
+/* Links two RLEs by setting the neighbor pointers as appropriate.
+ * NULLs are allowed as inputs.
+ */
+void rle_elem_link(struct rle_elem_t *const left, struct rle_elem_t *const right) {
+	if (left) {
+		left->right = right;
+	}
+	if (right) {
+		right->left = left;
+	}
 }
 
 /* Writes to the current RLE, or the left or right, as appropriate.
  * Thus may modify the current RLE and the current position.
  */
-void rle_write(struct rle_t **rle, int *rle_pos, char sym) {
-	struct rle_t *const orig = *rle;
+void rle_tape_write(struct rle_tape_t *const tape, sym_t sym) {
+	struct rle_elem_t *const orig = tape->curr;
 	if (orig->sym == sym) {
 		// Nothing to do
 		return;
 	}
 
-	if (*rle_pos == 0 && orig->left && orig->left->sym == sym) {
-		// Extend left neighbor and shrink original
-		*rle = orig->left;
-		(*rle)->len++;
-		*rle_pos = (*rle)->len - 1;
+	if (tape->rle_pos == 0 && orig->left && orig->left->sym == sym) {
+		// Extend left neighbor
+		tape->curr = orig->left;
+		tape->curr->len++;
+		tape->rle_pos = tape->curr->len - 1;
 
-		orig->len--;
-		if (orig->len == 0) {
-			// Remove original
-			if (orig->right) orig->right->left = orig->left;
-			orig->left->right = orig->right;
-			free(orig);
-		}
-
+		rle_elem_shrink(orig);
 		return;
 	}
 
-	if (*rle_pos == orig->len && orig->right && orig->right->sym == sym) {
-		// Extend right neighbor and shrink original
-		*rle = orig->right;
-		(*rle)->len++;
-		*rle_pos = 0;
+	if (tape->rle_pos == orig->len && orig->right && orig->right->sym == sym) {
+		// Extend right neighbor
+		tape->curr = orig->right;
+		tape->curr->len++;
+		tape->rle_pos = 0;
 
-		orig->len--;
-		if (orig->len == 0) {
-			// Remove original
-			if (orig->left) orig->left->right = orig->right;
-			orig->right->left = orig->left;
-			free(orig);
-		}
+		rle_elem_shrink(orig);
 		return;
 	}
 
 	// Create new in middle / left / right
-	struct rle_t *new_mid = malloc(sizeof *new_mid);
-	new_mid->sym = sym;
-	new_mid->len = 1;
+	struct rle_elem_t *const new_mid = rle_elem_init(sym, 1);
 
-	int left_len = *rle_pos;
+	const int left_len = tape->rle_pos;
 	if (left_len > 0) {
-		struct rle_t *new_left = malloc(sizeof *new_left);
-		new_left->left = orig->left;
-		new_left->right = new_mid;
-		new_left->sym = orig->sym;
-		new_left->len = left_len;
-
-		new_mid->left = new_left;
-		if (orig->left) orig->left->right = new_left;
+		// We have "leftover" symbols to the left
+		struct rle_elem_t *const new_left = rle_elem_init(orig->sym, left_len);
+		rle_elem_link(orig->left, new_left);
+		rle_elem_link(new_left, new_mid);
 	} else {
-		new_mid->left = orig->left;
-		if (orig->left) orig->left->right = new_mid;
+		rle_elem_link(orig->left, new_mid);
 	}
 
-	int right_len = orig->len - *rle_pos - 1;
+	const int right_len = orig->len - tape->rle_pos - 1;
 	if (right_len > 0) {
-		struct rle_t *new_right = malloc(sizeof *new_right);
-		new_right->left = new_mid;
-		new_right->right = orig->right;
-		new_right->sym = orig->sym;
-		new_right->len = right_len;
-
-		new_mid->right = new_right;
-		if (orig->right) orig->right->left = new_right;
+		// We have "leftover" symbols to the left
+		struct rle_elem_t *const new_right = rle_elem_init(orig->sym, right_len);
+		rle_elem_link(new_right, orig->right);
+		rle_elem_link(new_mid, new_right);
 	} else {
-		new_mid->right = orig->right;
-		if (orig->right) orig->right->left = new_mid;
+		rle_elem_link(new_mid, orig->right);
 	}
 
 	if (orig->left) assert(orig->left->right == new_mid || orig->left->right == new_mid->left);
@@ -173,60 +345,109 @@ void rle_write(struct rle_t **rle, int *rle_pos, char sym) {
 	assert(new_mid->len == 1);
 	assert(new_mid->sym == sym);
 
-	*rle = new_mid;
-	*rle_pos = 0;
+	// Update tape pointers and free removed element
+	tape->curr = new_mid;
+	tape->rle_pos = 0;
 	free(orig);
 }
 
-/* Moves in the RLEs by modifying the RLE pointer and the position.
+/* Reads a symbol from the RLE tape.
  */
-void rle_move(struct rle_t **rle, int *rle_pos, char dir) {
-	struct rle_t *const orig = *rle;
-	int dp = dir == 'L' ? -1 : 1;
-
-	if (*rle_pos + dp < 0) {
-		// Move off to the left
-		if (orig->left == NULL) {
-			orig->left = rle_init();
-			orig->left->right = *rle;
-		}
-		*rle = orig->left;
-		*rle_pos = (*rle)->len - 1;
-		return;
-	}
-
-	if (*rle_pos + dp >= orig->len) {
-		// Move off to the right
-		if (orig->right == NULL) {
-			orig->right = rle_init();
-			orig->right->left = *rle;
-		}
-		*rle = orig->right;
-		*rle_pos = 0;
-		return;
-	}
-
-	// Move within the RLE
-	*rle_pos += dp;
-	return;
+sym_t rle_tape_read(const struct rle_tape_t *const tape) {
+	return tape->curr->sym;
 }
 
-int rle_nonzero(struct rle_t *rle) {
-	struct rle_t *const orig = rle;
+/* Moves in the RLEs by modifying the relative position and, if needed,
+ * the current element pointer. If we move out of the current tape, a
+ * new element consisting of one zero is created, to represent one
+ * piece of the infinite blank tape. Note that if the current element's
+ * symbol is a zero, we instead excent the current element.
+ */
+void rle_tape_move(struct rle_tape_t *const tape, int delta) {
+	assert(delta == -1 || delta == 1);
+
+	// First update the absolute position
+	assert(INT_MIN + 1 < tape->abs_pos && tape->abs_pos < INT_MAX + 1);
+	tape->abs_pos += delta;
+
+	struct rle_elem_t *const orig = tape->curr;
+
+	if (tape->rle_pos + delta < 0) {
+		// Moving out of the element, to the left side
+		if (orig->left == NULL) {
+			// End of tape
+			if (orig->sym == 0) {
+				// Extend the current run of zeros by one
+				orig->len++;
+				assert(tape->rle_pos == 0); // by assumption
+			} else {
+				// Create a new zero to the left and move into it
+				struct rle_elem_t *const new_left = rle_elem_init(0, 1);
+				rle_elem_link(new_left, orig);
+				tape->curr = orig->left;
+				tape->rle_pos = tape->curr->len - 1;
+			}
+		} else {
+			// Move into the existing left element
+			tape->curr = orig->left;
+			tape->rle_pos = tape->curr->len - 1;
+		}
+		return;
+	}
+
+	if (tape->rle_pos + delta >= orig->len) {
+		// Moving out of the element, to the right
+		if (orig->right == NULL) {
+			if (orig->sym == 0) {
+				// Extend the current run of zeros by one
+				orig->len++;
+				tape->rle_pos++;
+				assert(tape->rle_pos == orig->len - 1); // by assumption
+			} else {
+				// Create a new zero to the right and move into it
+				struct rle_elem_t *const new_right = rle_elem_init(0, 1);
+				rle_elem_link(orig, new_right);
+				tape->curr = orig->right;
+				tape->rle_pos = tape->curr->len - 1;
+			}
+		} else {
+			// Move into the existing right element
+			tape->curr = orig->right;
+			tape->rle_pos = 0;
+		}
+		return;
+	}
+
+	// Simply move within the element
+	tape->rle_pos += delta;
+	assert(0 <= tape->rle_pos && tape->rle_pos < tape->curr->len); // check invariants
+}
+
+/* Counts the total number of nonzero symbols in the tape
+ * by doing a full scan of the entire tape
+ */
+int rle_count_nonzero(const struct rle_tape_t *const tape) {
+	const struct rle_elem_t *elem = tape->curr;
 	int nonzero = 0;
-	while (rle) {
-		if (rle->sym != '0') nonzero += rle->len;
-		rle = rle->left;
+
+	// Count current and to the left
+	while (elem) {
+		if (elem->sym != 0) nonzero += elem->len;
+		elem = elem->left;
 	}
-	rle = orig->right; // Already counted orig
-	while (rle) {
-		if (rle->sym != '0') nonzero += rle->len;
-		rle = rle->right;
+
+	// Count (strictly) to the right of current
+	elem = tape->curr->right; // Already counted tape->curr
+	while (elem) {
+		if (elem->sym != 0) nonzero += elem->len;
+		elem = elem->right;
 	}
+
 	return nonzero;
 }
 
 // For debugging
+/*
 void rle_tape_compare(struct tm_t *tm) {
 	struct rle_t *rle = tm->rle;
 	int n_rle = 1;
@@ -292,211 +513,364 @@ fail:
 		rle->right ? rle->right->sym : '0', rle->right ? rle->right->len : -1);
 	exit(1);
 }
+*/
 
-// TM functions
+///// Flat tape functions /////
 
-void tm_free(struct tm_t *tm) {
-	free(tm->prog);
-	free(tm->tape);
-	rle_free(tm->rle);
-	free(tm);
+/* Frees the memory used by a flat tape.
+ */
+void flat_tape_free(struct flat_tape_t *const tape) {
+	free(tape->syms);
+	free(tape);
+}
+
+/* Creates a flat tape of the specified initial size filled with zeros.
+ * The absolute position is initialized to zero.
+ */
+struct flat_tape_t *flat_tape_init(const int len, const int sym_bits) {
+	assert(len % 2 == 0); // invariant: must be an even number
+	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
+
+	struct flat_tape_t *const tape = malloc(sizeof *tape);
+	tape->syms = malloc(len * sizeof *tape->syms);
+	tape->len = len;
+	tape->mem_pos = 0;
+	tape->abs_pos = len / 2;
+	tape->sym_bits = sym_bits;
+
+	return tape;
+}
+
+/* Prints an excerpt of the flat tape with a given ctx number of symbols
+ * on either side of the head.
+ */
+void flat_tape_print(
+		const struct flat_tape_t *const tape,
+		const int ctx,
+		const state_t state,
+		const int prev_delta) {
+	// The left limit, may be negative
+	const int left = tape->mem_pos - ctx;
+	// Number of symbols outside the tape to print (distance from 0th sym)
+	const int left_out = maximum(0 - left, 0);
+	assert(left + left_out >= 0);
+
+	// The left limit, may be larger than len - 1
+	const int right = tape->mem_pos + ctx + 1;
+	// Number of symbols outside the tape to print (distance from last sym)
+	const int right_out = maximum(right - (tape->len - 1), 0);
+	assert(right - right_out < tape->len);
+
+	// Tape before head
+	for (int i = 0; i < left_out; i++) {
+		putchar('.');
+		putchar(' ');
+	}
+	for (int i = left + left_out; i < tape->mem_pos; i++) {
+		sym_bin_print(tape->syms[i], tape->sym_bits);
+		putchar(' ');
+	}
+
+	// Head and current state
+	if (prev_delta == -1) {
+		sym_bin_print(tape->syms[tape->mem_pos], tape->sym_bits);
+		putchar('<');
+		state_alph_print(state);
+	} else if (prev_delta == 1) {
+		state_alph_print(state);
+		putchar('>');
+		sym_bin_print(tape->syms[tape->mem_pos], tape->sym_bits);
+	} else {
+		// special case for non-started TMs (before first step)
+		assert(prev_delta == 0);
+
+		sym_bin_print(tape->syms[tape->mem_pos], tape->sym_bits);
+		putchar('[');
+		state_alph_print(state);
+		putchar(']');
+	}
+
+	// Tape after head
+	for (int i = tape->mem_pos + 1; i < right - right_out; i++) {
+		sym_bin_print(tape->syms[i], tape->sym_bits);
+		putchar(' ');
+	}
+	for (int i = 0; i < right_out; i++) {
+		putchar('.');
+		if (i < right_out - 1) putchar(' ');
+	}
+}
+
+/* Moves left or right in the TM, reallocating tape as required.
+ */
+void flat_tape_move(struct flat_tape_t *const tape, int delta) {
+	assert(delta == -1 || delta == 1);
+
+	if (tape->mem_pos + delta < 0 || tape->mem_pos + delta >= tape->len) {
+		// Ran out of tape, allocate more
+		const int old_len = tape->len;
+		// invariant: tape len is always a mult (and usually a power) of 2
+		assert(old_len % 2 == 0);
+		sym_t *const new_syms = malloc(sizeof *new_syms * old_len * 2);
+
+		// Place data in the "middle" of the tape, growing it by 50% on both sides
+		const int new_qtr = old_len / 2; // the new tape's length times 1/4
+		memset(new_syms, 0, new_qtr);
+		memcpy(new_syms + new_qtr, tape->syms, new_qtr * 2);
+		memset(new_syms + new_qtr * 3, 0, new_qtr);
+
+		tape->len = new_qtr * 4;
+		free(tape->syms);
+		tape->syms = new_syms;
+		tape->abs_pos += new_qtr;
+	}
+
+	tape->mem_pos += delta;
+	tape->abs_pos += delta;
+	// invariant: abs_pos is "zeroed" at (the sym right of) the middle of the tape
+	assert(tape->abs_pos == tape->mem_pos + tape->len / 2);
+}
+
+/* Writes a symbol to the tape.
+ */
+void flat_tape_write(const struct flat_tape_t *const tape, sym_t sym) {
+	tape->syms[tape->mem_pos] = sym;
+}
+
+/* Reads a symbol from the tape.
+ */
+sym_t flat_tape_read(const struct flat_tape_t *const tape) {
+	return tape->syms[tape->mem_pos];
+}
+
+///// TM definition (transition table) functions /////
+
+/* Stores a given instruction in the transition table.
+ */
+void tm_def_store(
+		const struct tm_def_t *const def,
+		const state_t state,
+		const sym_t sym,
+		const struct tm_instr_t instr) {
+	assert(0 <= state && state < def->n_states);
+	assert(0 <= sym && sym < def->n_syms);
+
+	assert(0 <= instr.state && instr.state < def->n_states);
+	assert(0 <= instr.sym && instr.sym < def->n_syms);
+	assert(instr.dir == DIR_LEFT || instr.dir == DIR_RIGHT);
+
+	const int idx = state * def->n_syms + sym;
+	def->sym_tab[idx] = instr.sym;
+	def->state_tab[idx] = instr.state;
+
+	const int field_idx = idx / DIR_TAB_BITS_PER_FIELD;
+	const int bit_idx = idx % DIR_TAB_BITS_PER_FIELD;
+	// NB we know that DIR_LEFT and DIR_RIGHT must be 0 and 1, but here we don't need to rely on which is which
+	if (instr.dir == 0) {
+		// Clear the bit
+		def->dir_tab[field_idx] &= ~(1 << bit_idx);
+	} else {
+		// Set the bit
+		def->dir_tab[field_idx] |= 1 << bit_idx;
+	}
+}
+
+/* Retrieves an instruction from the transition table.
+ */
+struct tm_instr_t tm_def_lookup(
+		const struct tm_def_t *const def,
+		const state_t state,
+		const sym_t sym) {
+	assert(0 <= state && state < def->n_states);
+	assert(0 <= sym && sym < def->n_syms);
+
+	const int idx = state * def->n_syms + sym;
+	struct tm_instr_t instr;
+	instr.sym = def->sym_tab[idx];
+	instr.state = def->state_tab[idx];
+
+	const int field_idx = idx / DIR_TAB_BITS_PER_FIELD;
+	const int bit_idx = idx % DIR_TAB_BITS_PER_FIELD;
+	instr.dir = (def->dir_tab[field_idx] >> bit_idx) & 1;
+
+	return instr;
 }
 
 /* Parses a Turing Machine from a given standard text format
- * e.g. "1RB1LB_1LA1LZ"
+ * e.g. "1RB1LB_1LA1LZ". This is a bit ugly to deal with
+ * possible input format errors...
  */
-struct tm_t *tm_parse(char *txt) {
-	struct tm_t *tm = malloc(sizeof *tm);
+struct tm_def_t *tm_def_parse(const char *txt) {
+	struct tm_def_t *def = malloc(sizeof *def);
 
+	// Find first underscore and thus number of columns
 	int cols = 0;
 	while(txt[cols] && txt[cols] != '_') cols++;
 
 	if (cols % 3 != 0) {
 		ERROR("Invalid width %d of row, should be divisible by 3.\n", cols);
 	}
-	tm->syms = cols / 3;
+	def->n_syms = cols / 3;
 
-	int len = strlen(txt);
+	const int len = strlen(txt);
 	// Each row contains three characters per sym, and one underscode for each except the last row
 	// We check that the string is well-formed below, so no length check here
-	tm->states = (len + 1) / (tm->syms * 3 + 1);
-	tm->prog = malloc(tm->states * tm->syms * 3);
+	def->n_states = (len + 1) / (def->n_syms * 3 + 1);
 
-	for (int i = 0; i < tm->states; i++) {
-		for (int j = 0; j < tm->syms; j++) {
-			int b = i * (tm->syms * 3 + 1) + j * 3; // Index into txt
-			int bp = (i * tm->syms + j) * 3; // Index into tm->prog
-			char sym = txt[b];
-			if (!sym || sym < '0' || sym - '0' >= tm->syms) {
+	// For now we store the table row-wise in a simple way
+	// but later on we might be able to optimize by changing the format...
+	const int tab_size = def->n_syms * def->n_states;
+	def->sym_tab = malloc(tab_size * sizeof *def->sym_tab);
+	def->state_tab = malloc(tab_size * sizeof *def->state_tab);
+	def->dir_tab = malloc(tab_size * sizeof *def->dir_tab / DIR_TAB_BITS_PER_FIELD);
+
+	for (int i = 0; i < def->n_states; i++) {
+		for (int j = 0; j < def->n_syms; j++) {
+			const int txt_idx = i * (def->n_syms * 3 + 1) + j * 3; // base index into txt
+
+			const char sym_c = txt[txt_idx];
+			if (!sym_c || sym_c < '0' || sym_c - '0' >= def->n_syms) {
 				// Allow unused states only if all three chars are '-'
 				// NB. short-circuiting prevents reading past end of string here
-				if (sym == '-' && txt[b + 1] == '-' && txt[b + 2] == '-') {
-					tm->prog[bp] = '-';
-					tm->prog[bp + 1] = '-';
-					tm->prog[bp + 2] = '-';
+				if (sym_c == '-' && txt[txt_idx + 1] == '-' && txt[txt_idx + 2] == '-') {
+					const struct tm_instr_t instr = {
+						0, // dummy, will not be read
+						DIR_LEFT, // dummy, will not be read
+						STATE_UNDEF,
+					};
+					tm_def_store(def, i, j, instr);
 					continue;
 				}
 				ERROR("Invalid symbol %c at row %d col %d, should be 0-%c.\n",
-					ONLY_ALNUM(sym), i, j, '0' + tm->syms - 1);
+					ONLY_ALNUM(sym_c), i, j, '0' + def->n_syms - 1);
 			}
-			char dir = txt[b + 1];
-			if (!dir || (dir != 'L' && dir != 'R')) {
+
+			char dir_c = txt[txt_idx + 1];
+			if (!dir_c || (dir_c != 'L' && dir_c != 'R')) {
 				ERROR("Invalid direction %c at row %d col %d.\n",
-					ONLY_ALNUM(dir), i, j);
+					ONLY_ALNUM(dir_c), i, j);
 			}
-			char state = txt[b + 2];
-			if (!state || state < 'A' || state - 'A' >= tm->states) {
-				if (state != 'Z' && state != 'H') {
-					WARN("Unusual halting state state %c at row %d col %d, should be A-%c.\n",
-						ONLY_ALNUM(state), i, j, 'A' + tm->states - 1);
+
+			char state_c = txt[txt_idx + 2];
+			if (!state_c || state_c < 'A' || state_c - 'A' >= def->n_states) {
+				if (state_c != 'Z' && state_c != 'H') {
+					WARN("Unusual halting state state %c at row %d col %d, should be either A-%c or H or Z.\n",
+						ONLY_ALNUM(state_c), i, j, 'A' + def->n_states - 1);
 				}
 			}
-			// Save the program
-			tm->prog[bp] = sym;
-			tm->prog[bp + 1] = dir;
-			tm->prog[bp + 2] = state;
+			// Save the instruction
+			const struct tm_instr_t instr = {
+				sym_c - '0',
+				dir_c == 'L' ? DIR_LEFT : DIR_RIGHT,
+				state_c - 'A',
+			};
+			tm_def_store(def, i, j, instr);
 		}
-		char uscore = txt[i * (tm->syms * 3 + 1) + tm->syms * 3];
-		if (uscore != '_') {
-			if (uscore != 0 || i != tm->states - 1) {
-				ERROR("Invalid row terminator %c at row %d, should be underscore.\n",
-					ONLY_ALNUM(uscore), i);
-			}
+
+		// Read an underscore as terminator (just to verify input format)
+		const char term = txt[i * (def->n_syms * 3 + 1) + def->n_syms * 3];
+		// NB after the last row we expect a null char, otherwise an '_'
+		if (i == def->n_states - 1 && term != 0) {
+			ERROR("Trailing character %c at row %d, expected end of input.\n",
+				ONLY_ALNUM(term), i);
+		} else if (term != '_') {
+			ERROR("Invalid row terminator %c at row %d, should be underscore.\n",
+				ONLY_ALNUM(term), i);
 		}
 	}
 
-	// Setup initial tape
-	tm->tape_len = INIT_TAPE_LEN;
-	tm->tape = malloc(tm->tape_len);
-	memset(tm->tape, '0', tm->tape_len);
-	tm->pos = tm->tape_len / 2;
-
-	// Initial position and state
-	tm->state = 'A';
-	tm->step = 0;
-	tm->halt = 0;
-
-	tm->rle = rle_init();
-	tm->rle_pos = 0;
-	tm->max_n_rle = 0;
-
-	return tm;
+	return def;
 }
 
 /* Prints the program of the given TM as a table.
  */
-void tm_print_prog(struct tm_t *tm) {
+void tm_def_print(struct tm_def_t *def) {
 	printf(" ");
-	for (int j = 0; j < tm->states; j++) {
+	for (int j = 0; j < def->n_states; j++) {
 		printf(" %d  ", j + 1);
 	}
-	for (int i = 0; i < tm->syms; i++) {
+	// const int sym_bits = ceil_log2(def->n_syms);
+	for (int i = 0; i < def->n_syms; i++) {
 		printf("\n%c ", 'A' + i);
-		for (int j = 0; j < tm->states; j++) {
-			printf("%.*s ", 3, tm->prog + (i * tm->states + j) * 3);
+		for (int j = 0; j < def->n_states; j++) {
+			struct tm_instr_t instr = tm_def_lookup(def, i, j);
+			printf("%d", instr.sym); // NB we use decimal here but binary in tape...
+			putchar(instr.dir == DIR_LEFT ? 'L' : 'R');
+			state_alph_print(instr.state);
+			putchar(' ');
 		}
 	}
 }
 
-/* Prints an excerpt of the tape with PRINT_TAPE_CTX symbols on
- * either side of the head.
+///// TM run functions /////
+
+/* Frees the tape memory used by a certain TM run.
+ * NOTE THIS DOES NOT FREE THE tm_def TRANSITION TABLE!
  */
-void tm_print_tape(FILE *f, struct tm_t *tm, int ctx) {
-	int left = tm->pos - ctx;
-	left = left < 0 ? 0 : left;
-	int right = tm->pos + ctx;
-	right = right >= tm->tape_len ? tm->tape_len - 1 : right;
-	fprintf(f, "%.*s [%c]%c %.*s\n",
-			tm->pos - left, tm->tape + left,
-			tm->tape[tm->pos], tm->state,
-			right - tm->pos, tm->tape + tm->pos + 1);
+void tm_run_free(struct tm_run_t *run) {
+	rle_tape_free(run->rle_tape);
+	flat_tape_free(run->flat_tape);
+	free(run);
 }
 
-/* Moves left or right in the TM, reallocating tape as required.
- * dir is given as 'L' or 'R'
- */
-void tm_move(struct tm_t *tm, char dir) {
-	int dp = dir == 'L' ? -1 : 1;
+struct tm_run_t *tm_run_init(const struct tm_def_t *const def) {
+	struct tm_run_t *run = malloc(sizeof *run);
+	run->def = def;
 
-	if (tm->pos + dp < 0 || tm->pos + dp >= tm->tape_len) {
-		// Ran out of tape, allocate more
-		int len = tm->tape_len;
-		char *tape = malloc(len * 2);
-		// Place data in the "middle" of the tape, growing it by 50% on both sides
-		memset(tape, '0', len / 2);
-		memset(tape + len / 2 * 3, '0', len / 2);
-		memcpy(tape + len / 2, tm->tape, len);
-		tm->tape_len = len * 2;
-		free(tm->tape);
-		tm->tape = tape;
-		tm->pos += len / 2;
-	}
+	const int sym_bits = ceil_log2(def->n_syms);	
+	run->rle_tape = rle_tape_init(sym_bits);
+	// NB we use initial length 1, but we could start with a larger len as a (small) optimization
+	run->flat_tape = flat_tape_init(1, sym_bits);
 
-	tm->pos += dp;
+	run->steps = 0;
+	run->state = 0;	// always start in state 0, or 'A'
+	run->prev_delta = 0; // represents undefined direction
+	return run;
 }
 
-int tm_step(struct tm_t *tm) {
-	if (tm->halt) {
+/* Runs one step for the machine. Return value is 1 if the machine halted, 0 otherwise.
+ */
+int tm_run_step(struct tm_run_t *run) {
+	if (run->state >= run->n_states) {
 		ERROR("Trying to step halted TM.\n");
 	}
 
 	// Read the symbol
-	char in_sym = tm->tape[tm->pos];
+	char in_sym = rle_tape_read(run->rle_tape);
+	assert(in_sym == flat_tape_read(run->flat_tape));
 
-	int ip = (tm->state - 'A') * (tm->syms * 3) + (in_sym - '0') * 3;
-
-	char out_sym = tm->prog[ip];
-	char out_dir = tm->prog[ip + 1];
-	char out_state = tm->prog[ip + 2];
+	// Lookup the instruction
+	struct tm_instr_t instr = tm_def_lookup(run->def, run->state, run->sym);
+	int delta = instr.dir == DIR_LEFT ? -1 : 1;
 
 	// Tape write and move
-	tm->tape[tm->pos] = out_sym;
-	tm_move(tm, out_dir);
+	flat_tape_write(run->flat_tape, instr.sym);
+	flat_tape_move(run->flat_tape, delta);
 
 	// RLE write and move
-	DEBUG && printf("RLE before write: ");
-	if (DEBUG) tm_rle_print(tm->rle, tm->rle_pos, tm->state);
+	rle_tape_write(run->rle_tape, instr.sym);
+	rle_tape_move(run->rle_tape, delta);
 
-	rle_write(&tm->rle, &tm->rle_pos, out_sym);
-	DEBUG && printf("RLE after write: ");
-	if (DEBUG) tm_rle_print(tm->rle, tm->rle_pos, tm->state);
+	// Update step, state and previous delta
+	run->state = out_state;
+	run->step++;
+	run->prev_delta = delta;
 
-	rle_move(&tm->rle, &tm->rle_pos, out_dir);
-	DEBUG && printf("RLE after move: ");
-	if(DEBUG) tm_rle_print(tm->rle, tm->rle_pos, tm->state);
-
-	tm->state = out_state;
-	tm->step++;
-
-	if (out_state >= 'A' + tm->states) {
-		tm->halt = 1;
-	}
-	return tm->halt;
+	return run->state >= run->def->n_states;
 }
 
-struct tm_t *tm_run(char *txt) {
-	struct tm_t *tm = tm_parse(txt);
-	while (tm->step < MAX_STEPS) {
-		int halt = tm_step(tm);
-		if (halt) break;
+/* Runs the machine until the given number of steps have passed, or
+ * the machine has halted. Returns 1 on halt and 0 otherwise.
+ */
+int tm_run_steps(struct tm_run_t *const run, int max_steps) {
+	while (tm->step < max_steps) {
+		int halt = tm_run_step(tm);
+		if (halt) return 1;
 	}
-	return tm;
+	return 0;
 }
 
-struct tm_t *tm_run_vis(char *txt) {
-	struct tm_t *tm = tm_parse(txt);
-	while (tm->step < MAX_STEPS) {
-		tm_print_tape(stdout, tm, PRINT_TAPE_CTX);
-		tm_rle_print(tm->rle, tm->rle_pos, tm->state);
-		rle_tape_compare(tm);
-		// printf("Enter to continue\n");
-		// getchar();
-		int halt = tm_step(tm);
-		if (halt) break;
-	}
-	return tm;
-}
-
+/*
 // Slow way to count number of non-zero symbols in tape
 int tm_nonzero(struct tm_t *tm) {
 	int nonzero = 0;
@@ -505,19 +879,7 @@ int tm_nonzero(struct tm_t *tm) {
 	}
 	return nonzero;
 }
-
-double seconds(clock_t t1, clock_t t0) {
-	return ((double) (t1 - t0)) / CLOCKS_PER_SEC;
-}
-
-struct run_t {
-	char *txt;
-	int steps;
-	int nonzero;
-};
-
-struct run_t TEST_RUNS[];
-int N_TEST_RUNS;
+*/
 
 void verify() {
 	double tot = 0.0;
@@ -551,95 +913,3 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-struct run_t TEST_RUNS[] = {
-	// BB(3)
-	{"1RB1RZ_1LB0RC_1LC1LA", 21, 5},
-	{"1RB1RZ_0LC0RC_1LC1LA", 20, 5},
-	{"1RB1LA_0RC1RZ_1LC0LA", 20, 5},
-	{"1RB1RA_0RC1RZ_1LC0LA", 19, 5},
-	{"1RB0RA_0RC1RZ_1LC0LA", 19, 4},
-	{"1RB0LC_1LA1RZ_1RC1RB", 18, 5},
-	{"1RB0LB_0RC1RC_1LA1RZ", 18, 5},
-	{"1RB1LB_0RC1RZ_1LC0LA", 18, 4},
-	{"1RB0LB_0RC1RZ_1LC0LA", 18, 3},
-	{"1RB1RZ_0RC0RC_1LC1LA", 17, 5},
-	{"1RB1RZ_0RC---_1LC0LA", 17, 4},
-	{"1RB1LC_0LC1RA_1RZ1LA", 16, 5},
-	{"1RB0LC_1LC1RB_1RZ1LA", 16, 5},
-	{"1RB1LA_0LA1RC_1RA1RZ", 15, 5},
-	{"1RB1LA_0LA1RC_0RB1RZ", 15, 4},
-	{"1RB0LC_1RC1RZ_1LA0RB", 15, 4},
-	{"1RB0RB_0LC1RZ_1RA1LC", 15, 3},
-	{"1RB1RZ_0RC1RB_1LC1LA", 14, 6},
-	{"1RB1RZ_1LB0LC_1RA1RC", 14, 5},
-	{"1RB1RZ_0LC1RA_1LA1LB", 14, 5},
-	{"1RB1RZ_1LC1RA_1RC0LB", 14, 4},
-	{"1RB1RZ_1LB0LC_1RA0RC", 14, 3},
-	{"1RB1RZ_0LC0RB_1LA1LC", 14, 3},
-	{"1RB0RB_1LC1RZ_0LA1RA", 14, 3},
-	{"1RB1RZ_0LC0RA_1RA1LB", 14, 2},
-	// BB(2,3)
-	{"1RB2LB1RZ_2LA2RB1LB", 38, 9},
-	{"1RB0LB1RZ_2LA1RB1RA", 29, 8},
-	{"1RB2LA1RZ_1LB1LA0RA", 26, 6},
-	{"1RB1LA1LB_0LA2RA1RZ", 26, 6},
-	{"1RB1LB1RZ_2LA2RB1LB", 24, 7},
-	{"1RB2LA1RZ_0LB1LA0RA", 22, 4},
-	{"1RB2RB1RZ_1LB1RA0LA", 21, 4},
-	{"1RB2LA2RB_1LA1RZ1RA", 20, 6},
-	{"1RB2LA1RZ_2LA2RB1LB", 20, 6},
-	{"1RB2LA0RB_1LA1RZ1RA", 20, 5},
-	{"1RB0LB1RZ_2LA2LB1RA", 19, 7},
-	{"1RB0RB1RZ_1LB2RA1LA", 19, 6},
-	{"1RB2LB1LA_2LA1RZ2RB", 18, 7},
-	{"1RB1LB2LA_1LA2RB1RZ", 18, 7},
-	{"1RB2LB2LA_2LA1RZ0RA", 18, 6},
-	{"1RB2LA1RZ_1LB1RA2RB", 18, 6},
-	{"1RB2LB1RZ_2LA1RA0LB", 18, 5},
-	{"1RB0RB1RZ_1LB2LA2RA", 17, 6},
-	{"1RB2LB0LB_2LA1RZ2RB", 17, 4},
-	{"1RB2RA1RZ_0LB2RB1LA", 17, 3},
-	// BB(2,4)
-	{"1RB3LA1LA1RA_2LA1RZ3RA3RB", 7195, 90},
-	{"1RB3LA1LA1RA_2LA1RZ3LA3RB", 6445, 84},
-	{"1RB3LA1LA1RA_2LA1RZ2RA3RB", 6445, 84},
-	{"1RB2RB3LA2RA_1LA3RB1RZ1LB", 2351, 60},
-	{"1RB3RA1LA2RB_2LA3LA1RZ1RA", 1021, 53},
-	{"1RB3LA1RZ0RB_2LB2LA0LA0RA", 1001, 26},
-	{"1RB2LA1RZ3LA_2LA2RB3RB2LB", 770, 30},
-	{"1RB2LB1RZ3LA_2LA2RB3RB2LB", 708, 29},
-	{"1RB2LA0RB1LB_1LA3RA1RA1RZ", 592, 24},
-	{"1RB3LA3RA0LA_2LB1LA1RZ2RA", 392, 20},
-	{"1RB3LA1LA1RA_2LA1RZ2RB3RB", 376, 21},
-	{"1RB3LA1LA1RA_2LA1RZ0LA3RB", 376, 21},
-	{"1RB3LA3RB0LA_2LA1RZ1LB3RA", 374, 22},
-	{"1RB1RA1LB0RA_2LA3RB2RA1RZ", 335, 18},
-	{"1RB2LA3LA1LB_2LA1RZ2RB0RA", 292, 18},
-	{"1RB0RB1RZ0LA_2LA3RA3LA1LB", 289, 13},
-	{"1RB1LA1RZ0LB_2LA3RB1RB2RA", 283, 18},
-	{"1RB3LA3RA0LA_2LB1LA1RZ3RA", 266, 19},
-	{"1RB2RB1RZ1LB_2LA2LB3RB0RB", 241, 15},
-	{"1RB2LA1RA1RA_1LB1LA3RB1RZ", 3932964, 2050},
-	// BB(5)
-	{"1RB1LC_1RC1RB_1RD0LE_1LA1LD_1RZ0LA", 47176870, 4098},
-	{"1RB0LD_1LC1RD_1LA1LC_1RZ1RE_1RA0RB", 23554764, 4097},
-	{"1RB1RA_1LC1LB_1RA0LD_0RB1LE_1RZ0RB", 11821234, 4097},
-	{"1RB1RA_1LC1LB_1RA0LD_1RC1LE_1RZ0RB", 11821220, 4097},
-	{"1RB1RA_0LC0RC_1RZ1RD_1LE0LA_1LA1LE", 11821190, 4096},
-	{"1RB1RA_1LC0RD_1LA1LC_1RZ1RE_1LC0LA", 11815076, 4096},
-	{"1RB1RA_1LC1LB_1RA0LD_0RB1LE_1RZ1LC", 11811040, 4097},
-	{"1RB1RA_1LC1LB_0RC1LD_1RA0LE_1RZ1LC", 11811040, 4097},
-	{"1RB1RA_1LC1LB_1RA0LD_1RC1LE_1RZ1LC", 11811026, 4097},
-	{"1RB1RA_0LC0RC_1RZ1RD_1LE1RB_1LA1LE", 11811010, 4096},
-	{"1RB1RA_1LC1LB_1RA1LD_0RE0LE_1RZ1LC", 11804940, 4097},
-	{"1RB1RA_1LC1LB_1RA1LD_1RA0LE_1RZ1LC", 11804926, 4097},
-	{"1RB1RA_1LC0RD_1LA1LC_1RZ1RE_0LE1RB", 11804910, 4096},
-	{"1RB1RA_1LC0RD_1LA1LC_1RZ1RE_1LC1RB", 11804896, 4096},
-	{"1RB1RA_1LC1LB_1RA1LD_1RA1LE_1RZ0LC", 11798826, 4098},
-	{"1RB1RA_1LC1RD_1LA1LC_1RZ0RE_1LC1RB", 11798796, 4097},
-	{"1RB1RA_1LC1RD_1LA1LC_1RZ1RE_0LE0RB", 11792724, 4097},
-	{"1RB1RA_1LC1RD_1LA1LC_1RZ1RE_1LA0RB", 11792696, 4097},
-	{"1RB1RA_1LC1RD_1LA1LC_1RZ1RE_1RA0RB", 11792682, 4097},
-	{"1RB1RZ_1LC1RC_0RE0LD_1LC0LB_1RD1RA", 2358064,  1471},
-};
-int N_TEST_RUNS = sizeof TEST_RUNS / sizeof *TEST_RUNS;
