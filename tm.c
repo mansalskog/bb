@@ -74,7 +74,7 @@ struct tm_instr_t {
  * out_state = state_tab[idx]
  * out_sym = sym_tab[idx]
  * move_dir = (move_dirs[idx / DIR_TAB_BITS_PER_FIELD] >> (idx % DIR_TAB_BITS_PER_FIELD)) & 1;
- * Note that we can get sym_bits from a tm_def_t by sym_bits = ceil_log2(n_syms)
+ * Note that we can get sym_bits from a tm_def_t by sym_bits = floor_log2(n_syms)
  */
 struct tm_def_t {
 	sym_t *sym_tab;				// symbol transition table
@@ -99,14 +99,14 @@ int maximum(const int a, const int b) {
 	return a > b ? a : b;
 }
 
-/* Calculates how many bits are needed to fit a value, e.g. ceil_log2(7) = 3.
- * Mathematically, this is equivalent to ceil(log2(n)) or the number m such that
- * n >> m == 0.
+/* Calculates how many bits are needed to fit a value, e.g. floor_log2(7) = 3.
+ * Mathematically, this is equivalent to floor(log2(n)) or the number m such that
+ * n >> (m + 1) == 0.
  */
-int ceil_log2(int n) {
+int floor_log2(int n) {
 	assert(n >= 0); // Only valid for non-negative integers
 	int shift = 0;
-	while (n >> shift > 0) shift++;
+	while (n >> (shift + 1) > 0) shift++;
 	return shift;
 }
 
@@ -513,8 +513,8 @@ struct flat_tape_t *flat_tape_init(const int len, const int sym_bits) {
 	struct flat_tape_t *const tape = malloc(sizeof *tape);
 	tape->syms = malloc(len * sizeof *tape->syms);
 	tape->len = len;
-	tape->mem_pos = 0;
-	tape->abs_pos = len / 2;
+	tape->mem_pos = len / 2;
+	tape->abs_pos = 0;
 	tape->sym_bits = sym_bits;
 
 	return tape;
@@ -543,7 +543,6 @@ void flat_tape_print(
 	// Tape before head
 	for (int i = 0; i < left_out; i++) {
 		putchar('.');
-		putchar(' ');
 	}
 	for (int i = left + left_out; i < tape->mem_pos; i++) {
 		sym_bin_print(tape->syms[i], tape->sym_bits);
@@ -568,6 +567,7 @@ void flat_tape_print(
 		state_alph_print(state);
 		putchar(']');
 	}
+	putchar(' ');
 
 	// Tape after head
 	for (int i = tape->mem_pos + 1; i < right - right_out; i++) {
@@ -576,8 +576,8 @@ void flat_tape_print(
 	}
 	for (int i = 0; i < right_out; i++) {
 		putchar('.');
-		if (i < right_out - 1) putchar(' ');
 	}
+	putchar('\n');
 }
 
 /* Moves left or right in the TM, reallocating tape as required.
@@ -601,13 +601,15 @@ void flat_tape_move(struct flat_tape_t *const tape, int delta) {
 		tape->len = new_qtr * 4;
 		free(tape->syms);
 		tape->syms = new_syms;
-		tape->abs_pos += new_qtr;
+		tape->mem_pos += new_qtr;
 	}
 
 	tape->mem_pos += delta;
 	tape->abs_pos += delta;
 	// invariant: abs_pos is "zeroed" at (the sym right of) the middle of the tape
-	assert(tape->abs_pos == tape->mem_pos + tape->len / 2);
+	if (tape->mem_pos != tape->abs_pos + tape->len / 2) {
+		ERROR("Assertion failed: %d != %d", tape->mem_pos, tape->abs_pos + tape->len / 2);
+	}
 }
 
 /* Writes a symbol to the tape.
@@ -775,7 +777,7 @@ void tm_def_free(struct tm_def_t *const def) {
 /* Prints the program of the given TM as a table.
  */
 void tm_def_print(const struct tm_def_t *const def) {
-	for (int j = 0; j < def->n_states; j++) {
+	for (int j = 0; j < def->n_syms; j++) {
 		printf(" %d  ", j + 1);
 	}
 	// const int sym_bits = ceil_log2(def->n_syms);
@@ -807,7 +809,7 @@ struct tm_run_t *tm_run_init(const struct tm_def_t *const def) {
 	struct tm_run_t *run = malloc(sizeof *run);
 	run->def = def;
 
-	const int sym_bits = ceil_log2(def->n_syms);	
+	const int sym_bits = floor_log2(def->n_syms);	
 	run->rle_tape = rle_tape_init(sym_bits);
 	// NB we use initial length 2, but we could start with a larger len as a (small) optimization
 	run->flat_tape = flat_tape_init(64, sym_bits); // FIXME bug with small tapes
@@ -828,8 +830,7 @@ int tm_run_step(struct tm_run_t *run) {
 	// Read the symbol
 	const char in_sym_flat = flat_tape_read(run->flat_tape);
 	const char in_sym_rle = rle_tape_read(run->rle_tape);
-	printf("%d == %d\n", in_sym_flat, in_sym_rle);
-	// assert(in_sym == in_sym_flat); // FIXME bug
+	assert(in_sym_flat == in_sym_rle); // FIXME bug
 	const char in_sym = in_sym_rle;
 
 	// Lookup the instruction
@@ -863,6 +864,20 @@ int tm_run_steps(struct tm_run_t *const run, int max_steps) {
 		if (halt) return 1;
 	}
 	return 0;
+}
+
+/* Prints the tape(s) of the TM run.
+ */
+void tm_run_print_tape(const struct tm_run_t *const run) {
+	rle_tape_print(
+			run->rle_tape,
+			run->state,
+			run->prev_delta);
+	flat_tape_print(
+			run->flat_tape,
+			5, // FIXME
+			run->state,
+			run->prev_delta);
 }
 
 /*

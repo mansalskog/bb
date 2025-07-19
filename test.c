@@ -5,6 +5,10 @@
 
 #include "tm.h"
 
+#define UNUSED(x) ((void) (x))
+
+/* Upper limit on number of steps.
+ */
 #define MAX_STEPS (INT_MAX >> 4)
 
 double seconds(clock_t t1, clock_t t0) {
@@ -40,14 +44,16 @@ void verify_test_cases() {
 		printf("Ran %d steps in %fs\n", run->steps, seconds(clock(), t));
 
 		assert(run->steps == tcase->steps);
-		printf("Test case %d/%d is OK!\n", i, N_TEST_CASES);
+		printf("Test case %d/%d is OK!\n", i + 1, N_TEST_CASES);
 
 		tm_run_free(run);
 		tm_def_free(def);
 	}
 }
 
-int main(int _argc, char **_argv) {
+int main(int argc, char **argv) {
+	UNUSED(argc);
+	UNUSED(argv);
 	printf("Verifying test cases...\n");	
 	verify_test_cases();
 	return 0;

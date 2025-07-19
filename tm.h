@@ -34,5 +34,6 @@ struct tm_run_t *tm_run_init(const struct tm_def_t *const def);
 void tm_run_free(struct tm_run_t *const run);
 int tm_run_step(struct tm_run_t *run);
 int tm_run_steps(struct tm_run_t *run, int max_steps);
+void tm_run_print_tape(const struct tm_run_t *const run);
 
 #endif

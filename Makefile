@@ -1,12 +1,19 @@
 CFLAGS=-O0 -ffast-math -Wall -Wextra -std=c99 -g
 
-all: bin/test
+all: bin/test bin/vis
 
+# static analysis
 check: tm.c
 	# clang-format --dry-run -Werror tm.c
 	# clang-tdiy tm.c
-	# test for memory leaks, OSX specific (can also use e.g. valgrind)
-	# leaks --atExit -- bin/test
+
+# dynamic analysis
+test: bin/test
+	# check for memory leaks, OSX specific (can also use e.g. valgrind)
+	leaks --atExit -- bin/test
+
+bin/vis: bin/vis.o bin/tm.o
+	clang $(CFLAGS) $^ -o $@
 
 bin/test: bin/test.o bin/tm.o
 	clang $(CFLAGS) $^ -o $@
