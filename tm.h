@@ -43,17 +43,19 @@ struct tm_run_t {
 
 struct tm_def_t *tm_def_parse(const char *const txt);
 void tm_def_free(struct tm_def_t *const def);
-void tm_def_print(const struct tm_def_t *const def);
+void tm_def_print(const struct tm_def_t *const def, const int directed);
 
-struct tm_run_t *tm_run_init(const struct tm_def_t *const def);
+struct tm_run_t *tm_run_init(const struct tm_def_t *const def, const int use_rle_tape, const int flat_tape_len, const int flat_tape_off);
 void tm_run_free(struct tm_run_t *const run);
 int tm_run_halted(const struct tm_run_t *const run);
 int tm_run_step(struct tm_run_t *run);
 int tm_run_steps(struct tm_run_t *run, int max_steps);
-void tm_run_print_tape(const struct tm_run_t *const run);
+void tm_run_print_tape(const struct tm_run_t *const run, const int directed);
 
 int tm_flat_tape_cmp(const struct flat_tape_t *const tape_a, const struct flat_tape_t *const tape_b);
 int tm_rle_tape_cmp(const struct rle_tape_t *const tape_a, const struct rle_tape_t *const tape_b);
 int tm_mixed_tape_cmp(const struct rle_tape_t *const rle_tape, const struct flat_tape_t *const flat_tape);
+
+struct tm_def_t *tm_def_to_mm_def(const struct tm_def_t *const tm_def, const int scale);
 
 #endif

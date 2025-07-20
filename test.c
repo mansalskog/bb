@@ -38,7 +38,7 @@ void verify_test_case(const struct test_case_t *const tcase, int quiet)
 	}
 
 	t = clock();
-	struct tm_run_t *run = tm_run_init(def);
+	struct tm_run_t *run = tm_run_init(def, 1, 16, 8);
 	if (!quiet) printf("Initialized in %fs\n", seconds(clock(), t));
 
 	t = clock();
