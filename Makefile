@@ -3,7 +3,7 @@
 # Note that we don't use floats except for some debugging info, so ffast-math is okay
 CFLAGS_RELEASE=-O3 -ffast-math -Wall -Wextra -std=c99
 # Testing compiler flags
-CFLAGS=-O0 -Wall -Wextra -std=c99 -g
+CFLAGS=-O0 -Wall -Wextra -std=c99 -g -ferror-limit=0
 # Include as many linter checks as possible
 LINT_INCL=bugprone-*,cert-*,clang-analyzer-*,cppcoreguidelines-*,hicpp-*,linuxkernel-*,llvm-*,misc-*,performance-*,portability-*,readability-*
 # Disabled some checks because:
@@ -20,12 +20,13 @@ LINT_EXCL=\
 		-readability-function-cognitive-complexity
 LINT_FILTERS=$(LINT_INCL),$(LINT_EXCL)
 
-COMMON=bin/tm.o
+COMMON_C=tm_run.c tm_def.c tape_flat.c tape_rle.c
+COMMON_O=bin/tm_run.o bin/tm_def.o bin/tape_flat.o bin/tape_rle.o
 
 all: bin/test bin/vis
 
 # static analysis
-check: tm.c vis.c test.c
+check: $(COMMON_C)
 	# clang-check -analyze $^ -- $(CFLAGS)
 	clang-tidy $^ -checks='$(LINT_FILTERS)' -- $(CFLAGS)
 
@@ -35,7 +36,7 @@ test: bin/test
 	# check for memory leaks, OSX specific and ANNOYING (codesign and other BS), just use valgrind instead if you can
 	leaks --atExit -- $< -q
 
-bin/%: bin/%.o $(COMMON)
+bin/%: bin/%.o $(COMMON_O)
 	clang $(CFLAGS) $^ -o $@
 
 bin/%.o: %.c
