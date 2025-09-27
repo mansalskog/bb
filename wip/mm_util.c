@@ -1,3 +1,7 @@
+#include "tape_rle.h"
+#include "tape_flat.h"
+#include "tm_def.h"
+#include "tm_run.h"
 
 /*
  * Determine one transition for t

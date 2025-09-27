@@ -41,7 +41,7 @@ struct flat_tape_t *flat_tape_init(const int len, const int init_pos, const unsi
 	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
 
 	struct flat_tape_t *const tape = malloc(sizeof *tape);
-	tape->syms = malloc(len * sizeof *tape->syms);
+	tape->syms = malloc((size_t) len * sizeof *tape->syms);
 	tape->len = len;
 	tape->rel_pos = 0;
 	tape->init_pos = init_pos;
@@ -113,7 +113,7 @@ void flat_tape_move(struct flat_tape_t *const tape, int delta)
 		// Ran out of tape, allocate more
 		const int old_len = tape->len;
 		const int new_len = old_len * 2;
-		sym_t *const new_syms = malloc(sizeof *new_syms * new_len);
+		sym_t *const new_syms = malloc(sizeof *new_syms * (size_t) new_len);
 
 		/* Place data in the "middle" of the tape, growing it by about 50% on both sides
 		 * We need to increment the offset by half of the old length, which may be one unit
@@ -122,9 +122,9 @@ void flat_tape_move(struct flat_tape_t *const tape, int delta)
 		 * exactly half of new_len.
 		 */
 		const int offset = old_len / 2;
-		memset(new_syms, 0, offset * sizeof *new_syms);
-		memcpy(new_syms + (ptrdiff_t) offset, tape->syms, old_len * sizeof *new_syms);
-		memset(new_syms + (ptrdiff_t) (offset + old_len), 0, (new_len - old_len - offset) * sizeof *new_syms);
+		memset(new_syms, 0, (size_t) offset * sizeof *new_syms);
+		memcpy(new_syms + (ptrdiff_t) offset, tape->syms, (size_t) old_len * sizeof *new_syms);
+		memset(new_syms + (ptrdiff_t) (offset + old_len), 0, (size_t) (new_len - old_len - offset) * sizeof *new_syms);
 
 		tape->len = new_len;
 		free(tape->syms);

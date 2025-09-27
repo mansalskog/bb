@@ -17,7 +17,7 @@ struct tm_run_t {
 	struct flat_tape_t *flat_tape;		// tape (flat representation)
 
 	int steps;							// the number of steps performed
-	int state;							// the current state
+	state_t state;						// the current state
 	int prev_delta;						// last direction moved, initially zero, then always -1 or 1
 	// invariants: compare_rle_flat_tapes(rle_tape, flat_tape) == 0 given that both are non-null.
 };

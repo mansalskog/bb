@@ -7,12 +7,10 @@
 #include "tm_com.h"
 #include "tm_def.h"
 
-static const int DIR_TAB_BITS_PER_FIELD = CHAR_BIT * sizeof (unsigned long);
-
 /*
  * Stores a given instruction in the transition table.
  */
-static void tm_def_store(const struct tm_def_t *const def, const state_t state, const sym_t sym, const struct tm_instr_t instr)
+static void tm_def_store(struct tm_def_t *const def, const state_t state, const sym_t sym, const struct tm_instr_t instr)
 {
 	assert(0 <= state && state < def->n_states);
 	assert(0 <= sym && sym < def->n_syms);
@@ -22,20 +20,7 @@ static void tm_def_store(const struct tm_def_t *const def, const state_t state, 
 	assert(instr.dir == DIR_LEFT || instr.dir == DIR_RIGHT);
 
 	const int idx = state * def->n_syms + sym;
-	def->sym_tab[idx] = instr.sym;
-	def->state_tab[idx] = instr.state;
-
-	const unsigned field_idx = idx / DIR_TAB_BITS_PER_FIELD;
-	const unsigned bit_idx = idx % DIR_TAB_BITS_PER_FIELD;
-	// NB we know that DIR_LEFT and DIR_RIGHT must be 0 and 1, but here we don't need to rely on which is which
-	// Also note that here we assume that the type is unsigned long, so be careful with changing that!
-	if (instr.dir == 0) {
-		// Clear the bit
-		def->dir_tab[field_idx] &= ~(1UL << bit_idx);
-	} else {
-		// Set the bit
-		def->dir_tab[field_idx] |= 1UL << bit_idx;
-	}
+	def->instr_tab[idx] = instr;
 }
 
 /*
@@ -47,15 +32,7 @@ struct tm_instr_t tm_def_lookup(const struct tm_def_t *const def, const state_t 
 	assert(0 <= sym && sym < def->n_syms);
 
 	const int idx = state * def->n_syms + sym;
-	struct tm_instr_t instr;
-	instr.sym = def->sym_tab[idx];
-	instr.state = def->state_tab[idx];
-
-	const unsigned field_idx = idx / DIR_TAB_BITS_PER_FIELD;
-	const unsigned bit_idx = idx % DIR_TAB_BITS_PER_FIELD;
-	instr.dir = (def->dir_tab[field_idx] >> bit_idx) & 1UL;
-
-	return instr;
+	return def->instr_tab[idx];
 }
 
 /*
@@ -65,13 +42,10 @@ struct tm_instr_t tm_def_lookup(const struct tm_def_t *const def, const state_t 
 static struct tm_def_t *tm_def_init(const int n_syms, const int n_states)
 {
 	assert(n_syms > 0 && n_states > 0);
-	struct tm_def_t *def = malloc(sizeof *def);
+	const size_t tab_size = (size_t) (n_syms * n_states);
+	struct tm_def_t *def = malloc(sizeof *def + tab_size * sizeof *def->instr_tab);
 	def->n_syms = n_syms;
 	def->n_states = n_states;
-	const int tab_size = n_syms * n_states;
-	def->sym_tab = malloc(tab_size * sizeof *def->sym_tab);
-	def->state_tab = malloc(tab_size * sizeof *def->state_tab);
-	def->dir_tab = malloc(tab_size * sizeof *def->dir_tab / DIR_TAB_BITS_PER_FIELD);
 	return def;
 }
 
@@ -80,9 +54,6 @@ static struct tm_def_t *tm_def_init(const int n_syms, const int n_states)
  */
 void tm_def_free(struct tm_def_t *const def)
 {
-	free(def->sym_tab);
-	free(def->state_tab);
-	free(def->dir_tab);
 	free(def);
 }
 
@@ -108,12 +79,12 @@ struct tm_def_t *tm_def_parse(const char *const txt)
 	// Each row contains three characters per sym, and one underscode for each except the last row
 	// We check that the string is well-formed below, so no length check here
 	// Also this cast is OK because the number of states should fit in an int
-	const int n_states = (int) ((len + 1) / (n_syms * 3 + 1));
+	const int n_states = ((int) len + 1) / (n_syms * 3 + 1);
 
 	struct tm_def_t *def = tm_def_init(n_syms, n_states);
 
-	for (int i_state = 0; i_state < def->n_states; i_state++) {
-		for (int i_sym = 0; i_sym < def->n_syms; i_sym++) {
+	for (state_t i_state = 0; i_state < def->n_states; i_state++) {
+		for (sym_t i_sym = 0; i_sym < def->n_syms; i_sym++) {
 			const int txt_idx = i_state * (def->n_syms * 3 + 1) + i_sym * 3; // base index into txt
 
 			const char sym_c = txt[txt_idx];
@@ -122,9 +93,9 @@ struct tm_def_t *tm_def_parse(const char *const txt)
 				// NB. short-circuiting prevents reading past end of string here
 				if (sym_c == '-' && txt[txt_idx + 1] == '-' && txt[txt_idx + 2] == '-') {
 					const struct tm_instr_t instr = {
-						0, // dummy, will not be read
-						DIR_LEFT, // dummy, will not be read
-						STATE_UNDEF,
+						0, 				// dummy, will not be read
+						STATE_UNDEF,	// halting state
+						DIR_LEFT, 		// dummy, will not be read
 					};
 					tm_def_store(def, i_state, i_sym, instr);
 					continue;
@@ -133,13 +104,13 @@ struct tm_def_t *tm_def_parse(const char *const txt)
 					ONLY_ALNUM(sym_c), i_state, i_sym, '0' + def->n_syms - 1);
 			}
 
-			char dir_c = txt[txt_idx + 1];
+			const char dir_c = txt[txt_idx + 1];
 			if (!dir_c || (dir_c != 'L' && dir_c != 'R')) {
 				ERROR("Invalid direction %c at row %d col %d.\n",
 					ONLY_ALNUM(dir_c), i_state, i_sym);
 			}
 
-			char state_c = txt[txt_idx + 2];
+			const char state_c = txt[txt_idx + 2];
 			if (!state_c || state_c < 'A' || state_c - 'A' >= def->n_states) {
 				if (state_c != 'Z' && state_c != 'H') {
 					WARN("Unusual halting state state %c at row %d col %d, should be either A-%c or H or Z.\n",
@@ -148,9 +119,9 @@ struct tm_def_t *tm_def_parse(const char *const txt)
 			}
 			// Save the instruction
 			const struct tm_instr_t instr = {
-				sym_c - '0',
+				(sym_t) (sym_c - '0'),
+				(state_t) (state_c - 'A'),
 				dir_c == 'L' ? DIR_LEFT : DIR_RIGHT,
-				state_c - 'A',
 			};
 			tm_def_store(def, i_state, i_sym, instr);
 		}
@@ -183,9 +154,9 @@ void tm_def_print(const struct tm_def_t *const def, const int directed)
 	for (int i_sym = 0; i_sym < def->n_syms; i_sym++) {
 		printf(" %d  ", i_sym + 1);
 	}
-	for (int i_state = 0; i_state < def->n_states; i_state++) {
+	for (state_t i_state = 0; i_state < def->n_states; i_state++) {
 		printf("\n%c ", 'A' + i_state);
-		for (int i_sym = 0; i_sym < def->n_syms; i_sym++) {
+		for (sym_t i_sym = 0; i_sym < def->n_syms; i_sym++) {
 			struct tm_instr_t instr = tm_def_lookup(def, i_state, i_sym);
 			printf("%d%c", // NB we use decimal here but binary in tape...
 				instr.sym,

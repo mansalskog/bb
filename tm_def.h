@@ -8,8 +8,8 @@
  */
 struct tm_instr_t {
 	sym_t sym;			// the symbol to write
-	dir_t dir;		// the move direction; it is only one bit
 	state_t state;		// the next state to enter
+	dir_t dir;			// the move direction; it is only one bit
 };
 
 /*
@@ -19,14 +19,12 @@ struct tm_instr_t {
  * out_state = state_tab[idx]
  * out_sym = sym_tab[idx]
  * move_dir = (move_dirs[idx / DIR_TAB_BITS_PER_FIELD] >> (idx % DIR_TAB_BITS_PER_FIELD)) & 1;
- * Note that we can get sym_bits from a tm_def_t by sym_bits = floor_log2(n_syms)
+ * Note that we can get sym_bits from a tm_def_t by sym_bits = ceil_log2(n_syms)
  */
 struct tm_def_t {
-	sym_t *sym_tab;				// symbol transition table
-	state_t *state_tab;			// state transition table
-	unsigned long *dir_tab;		// direction table as packed bit-fields
-	int n_syms;					// number of symbols
-	int n_states;				// number of states
+	int n_syms;						// number of symbols
+	int n_states;					// number of states
+	struct tm_instr_t instr_tab[];	// symbol transition table
 };
 
 struct tm_def_t *tm_def_parse(const char *txt);

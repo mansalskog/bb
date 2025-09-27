@@ -55,7 +55,7 @@ struct tm_run_t *tm_run_init(
 	struct tm_run_t *run = malloc(sizeof *run);
 	run->def = def;
 
-	const unsigned sym_bits = ceil_log2(def->n_syms);
+	const unsigned sym_bits = ceil_log2((unsigned) def->n_syms); // TODO ugly
 	run->rle_tape = use_rle_tape ? rle_tape_init(sym_bits) : NULL;
 	// NB we use initial length 2, but we could start with a larger len as a (small) optimization
 	if (flat_tape_len <= 0)
@@ -86,7 +86,7 @@ int tm_run_step(struct tm_run_t *const run)
 	}
 
 	// Read the symbol
-	sym_t in_sym = -1; // Initialize to invalid symbol to make compiler happy
+	sym_t in_sym = 0; // Initialize to placeholder symbol to make compiler happy
 	if (run->rle_tape)
 		in_sym = rle_tape_read(run->rle_tape);
 	else if (run->flat_tape)
