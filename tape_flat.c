@@ -1,8 +1,9 @@
+#include <assert.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 #include "tm_com.h"
 #include "util.h"
@@ -109,7 +110,6 @@ void flat_tape_move(struct flat_tape_t *const tape, int delta)
 
 	const int mem_pos = tape->rel_pos + tape->init_pos;
 	if (mem_pos + delta < 0 || mem_pos + delta >= tape->len) {
-		assert(0); // FIXME
 		// Ran out of tape, allocate more
 		const int old_len = tape->len;
 		const int new_len = old_len * 2;

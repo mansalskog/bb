@@ -6,9 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "tm_com.h"
-#include "tape_rle.h"
 #include "tape_flat.h"
+#include "tape_rle.h"
+#include "tm_com.h"
+#include "tm_def.h"
 #include "util.h"
 
 #include "tm_run.h"
@@ -85,7 +86,7 @@ int tm_run_step(struct tm_run_t *const run)
 	}
 
 	// Read the symbol
-	sym_t in_sym;
+	sym_t in_sym = -1; // Initialize to invalid symbol to make compiler happy
 	if (run->rle_tape)
 		in_sym = rle_tape_read(run->rle_tape);
 	else if (run->flat_tape)

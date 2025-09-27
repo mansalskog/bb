@@ -11,7 +11,7 @@
 void sym_bin_print(const sym_t sym, const unsigned sym_bits)
 {
 	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
-	for (int i = sym_bits - 1; i >= 0; i--) {
+	for (int i = (int) sym_bits - 1; i >= 0; i--) {
 		// Don't bother shifting down because we only care if zero or not
 		const unsigned bit = sym & (1U << i);
 		printf("%c", bit ? '1' : '0');

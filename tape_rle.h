@@ -2,6 +2,8 @@
 #ifndef TM_TAPE_RLE_H
 #define TM_TAPE_RLE_H
 
+#include "tm_com.h"
+
 struct rle_tape_t;
 
 void rle_tape_free(struct rle_tape_t *tape);

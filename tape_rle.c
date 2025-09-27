@@ -1,4 +1,6 @@
 #include <assert.h>
+#include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 
