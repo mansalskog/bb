@@ -1,7 +1,13 @@
-// Dynamically allocated flat tape
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 
-// FIXME
-typedef unsigned long sym_t;
+#include "tm_com.h"
+#include "util.h"
+
+#include "tape_flat.h"
 
 /*
  * A flat tape that automatically expands (by doubling the size) if we run off the edge.

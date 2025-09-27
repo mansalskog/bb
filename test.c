@@ -1,19 +1,16 @@
+#include <assert.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-#include "util.h"
-#include "tape.h"
-#include "table.h"
-#include "machine.h"
+#include "tm_def.h"
+#include "tm_run.h"
 
 // Upper limit on number of steps. NB not a hard limit, may be exceeded by up to BATCH_STEPS - 1.
 const int MAX_STEPS = (INT_MAX >> 4);
 // Number of steps before we perform some consistency checks
 const int BATCH_STEPS = 1000;
-// Size of the tape
-const int TAPE_SIZE = 100000;
 
 double seconds(clock_t t1, clock_t t0)
 {
@@ -22,38 +19,48 @@ double seconds(clock_t t1, clock_t t0)
 
 struct test_case_t {
 	char *txt;
-	unsigned steps;
-	unsigned nonzero;
+	int steps;
+	int nonzero;
 };
 
 // Defined below
 const struct test_case_t TEST_CASES[];
 const int N_TEST_CASES;
 
-double verify_test_case(const struct test_case_t *const tcase, int quiet)
+void verify_test_case(const struct test_case_t *const tcase, int quiet)
 {
 	clock_t t = clock();
-	struct table_t table = table_parse(tcase->txt);
+	struct tm_def_t *def = tm_def_parse(tcase->txt);
 	if (!quiet) printf("Parsed in %fs\n", seconds(clock(), t));
 
+	if (!quiet) {
+		printf("%s\n", tcase->txt);
+		tm_def_print(def, 0);
+	}
+
 	t = clock();
-	struct tape_t tape = tape_init(TAPE_SIZE, ceil_log2(table.n_syms));
-	struct machine_t machine = machine_init(&table, &tape, TAPE_SIZE / 2);
+	struct tm_run_t *run = tm_run_init(def, 1, 0, 8);
 	if (!quiet) printf("Initialized in %fs\n", seconds(clock(), t));
 
 	t = clock();
-	machine_run(&machine, MAX_STEPS);
-	const double runtime = seconds(clock(), t);
-	if (!quiet) printf("Ran in %fs\n", runtime);
-
-	if (machine.curr_step != tcase->steps) {
-		ERROR("Invalid number of steps for machine '%s', expected %u, got %u\n",
-				tcase->txt, tcase->steps, machine.curr_step);
+	while (1) {
+		tm_run_steps(run, BATCH_STEPS);
+		// int cmp = tm_mixed_tape_cmp(run->rle_tape, run->flat_tape);
+		// assert(cmp == TAPES_EQUAL);
+		if (tm_run_halted(run))
+			break;
+		if (run->steps >= MAX_STEPS)
+			break;
 	}
+	if (!quiet) printf("Ran %d steps in %fs\n", run->steps, seconds(clock(), t));
 
-	tape_free(&tape);
+	assert(tm_run_halted(run));
 
-	return runtime;
+	assert(run->steps == tcase->steps);
+	if (!quiet) printf("Test case is OK!\n");
+
+	tm_run_free(run);
+	tm_def_free(def);
 }
 
 void unknown_argument(const char *arg0, const char *arg)
@@ -81,14 +88,10 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-	double tot_runtime = 0.0;
-	for (int j = 0; j < 10; j++) {
-		if (!quiet) printf("Verifying test cases...\n");
-		for (int i = 0; i < N_TEST_CASES; i++) {
-			tot_runtime += verify_test_case(TEST_CASES + i, quiet);
-		}
+	if (!quiet) printf("Verifying test cases...\n");
+	for (int i = 0; i < N_TEST_CASES; i++) {
+		verify_test_case(TEST_CASES + i, quiet);
 	}
-	printf("Total runtime: %fs\n", tot_runtime);
 	return 0;
 }
 

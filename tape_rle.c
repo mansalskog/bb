@@ -1,6 +1,10 @@
-// Run Length Encoding tape
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-typedef unsigned long sym_t;
+#include "tm_com.h"
+
+#include "tape_rle.h"
 
 /*
  * An element of a RLE linked list. If left or right are NULL

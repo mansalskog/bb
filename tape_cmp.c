@@ -1,3 +1,14 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+
+#include "tm_com.h"
+#include "tape_rle.h"
+#include "tape_flat.h"
+
+#include "tape_cmp.h"
+
+
 /*
  * Because we want to return the position where the tapes differ (i.e. the first one found, there
  * may be more differences), we need to use these sentinel values to represent equality or

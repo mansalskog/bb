@@ -34,8 +34,8 @@ LINT_EXCL=\
 		-hicpp-signed-bitwise
 LINT_FILTERS=$(LINT_INCL),$(LINT_EXCL)
 
-COMMON_C=tm_com.c tm_run.c tm_def.c tape_flat.c tape_rle.c util.c
-COMMON_O=bin/tm_com.o bin/tm_run.o bin/tm_def.o bin/tape_flat.o bin/tape_rle.o bin/util.o
+COMMON_C=machine.c table.c tape.c util.c
+COMMON_O=bin/machine.o bin/table.o bin/tape.o bin/util.o
 
 fast: bin/fast
 

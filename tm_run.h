@@ -1,6 +1,8 @@
 #ifndef TM_RUN_H
 #define TM_RUN_H
 
+#include "tm_def.h"
+
 /*
  * Represents a given run of a TM, which contains a reference to the transition
  * table, as well as the two tape representations we use (note that one of the tapes may be NULL

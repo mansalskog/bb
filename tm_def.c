@@ -1,35 +1,17 @@
-/*
- * Represents an "instruction" in the transition table.
- */
-struct tm_instr_t {
-	sym_t sym;			// the symbol to write
-	dir_t dir;		// the move direction; it is only one bit
-	state_t state;		// the next state to enter
-};
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-/*
- * A definition of a Turing Machine transition table, as a static structure.
- * The function is (in_state, in_sym) -> (out_state, out_sym, move_dir) where
- * idx = in_state * n_syms + in_sym
- * out_state = state_tab[idx]
- * out_sym = sym_tab[idx]
- * move_dir = (move_dirs[idx / DIR_TAB_BITS_PER_FIELD] >> (idx % DIR_TAB_BITS_PER_FIELD)) & 1;
- * Note that we can get sym_bits from a tm_def_t by sym_bits = floor_log2(n_syms)
- */
-struct tm_def_t {
-	sym_t *sym_tab;				// symbol transition table
-	state_t *state_tab;			// state transition table
-	unsigned long *dir_tab;		// direction table as packed bit-fields
-	int n_syms;					// number of symbols
-	int n_states;				// number of states
-};
+#include "tm_com.h"
+#include "tm_def.h"
 
-const int DIR_TAB_BITS_PER_FIELD = CHAR_BIT * sizeof (unsigned long);
+static const int DIR_TAB_BITS_PER_FIELD = CHAR_BIT * sizeof (unsigned long);
 
 /*
  * Stores a given instruction in the transition table.
  */
-void tm_def_store(const struct tm_def_t *const def, const state_t state, const sym_t sym, const struct tm_instr_t instr)
+static void tm_def_store(const struct tm_def_t *const def, const state_t state, const sym_t sym, const struct tm_instr_t instr)
 {
 	assert(0 <= state && state < def->n_states);
 	assert(0 <= sym && sym < def->n_syms);
@@ -79,7 +61,7 @@ struct tm_instr_t tm_def_lookup(const struct tm_def_t *const def, const state_t 
  * Allocates an empty transition table of the specified size. We must fill it with states
  * before running.
  */
-struct tm_def_t *tm_def_init(const int n_syms, const int n_states)
+static struct tm_def_t *tm_def_init(const int n_syms, const int n_states)
 {
 	assert(n_syms > 0 && n_states > 0);
 	struct tm_def_t *def = malloc(sizeof *def);
@@ -103,6 +85,7 @@ void tm_def_free(struct tm_def_t *const def)
 	free(def);
 }
 
+#define ONLY_ALNUM(c) ((c) != 0 ? (c) : '?')
 
 /* Parses a Turing Machine from a given standard text format
  * e.g. "1RB1LB_1LA1LZ". This is a bit ugly to deal with
