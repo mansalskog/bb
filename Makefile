@@ -1,7 +1,7 @@
 .PRECIOUS: bin/%.o
 
 # Note that we don't use floats except for some debugging info, so ffast-math is okay
-CFLAGS_RELEASE=-O3 -ffast-math -Wall -Wextra -std=c99
+CFLAGS_RELEASE=-O3 -ffast-math -Wall -Wextra -std=c99 -ferror-limit=0 -DNDEBUG
 # Testing compiler flags
 CFLAGS=-O0 -Wall -Wextra -std=c99 -g -ferror-limit=0
 # Include as many linter checks as possible
@@ -32,10 +32,14 @@ LINT_EXCL=\
 		-hicpp-signed-bitwise
 LINT_FILTERS=$(LINT_INCL),$(LINT_EXCL)
 
-COMMON_C=tape.c
-COMMON_O=bin/tape.o
+COMMON_C=machine.c table.c tape.c util.c
+COMMON_O=bin/machine.o bin/table.o bin/tape.o bin/util.o
 
-all: bin/tape
+fast: bin/fast
+
+bin/fast: test.c $(COMMON_C)
+	@ mkdir -p bin/
+	clang $(CFLAGS_RELEASE) $^ -o $@
 
 # static analysis
 check: $(COMMON_C)
@@ -43,8 +47,8 @@ check: $(COMMON_C)
 	clang-tidy $^ -checks='$(LINT_FILTERS)' -- $(CFLAGS)
 
 # dynamic analysis
-test: bin/tape
-	bin/tape
+test: bin/test
+	bin/test
 	# check for memory leaks, OSX specific and ANNOYING (codesign and other BS), just use valgrind instead if you can
 	leaks --atExit -- $< -q
 
