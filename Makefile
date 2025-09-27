@@ -1,7 +1,8 @@
 .PRECIOUS: bin/%.o
 
-# Common compiler flags, should not be used by themselves
-_CFLAGS=-std=c99 -ferror-limit=0 -Wall -Wextra -Wconversion -Wdouble-promotion
+_TMP_CFLAGS=-Wno-missing-prototypes -Wno-missing-variable-declarations -Wno-unsafe-buffer-usage -Wno-reserved-macro-identifier
+# Common compiler flags
+_CFLAGS=-std=c99 -pedantic -ferror-limit=0 -Weverything -Wno-padded $(_TMP_CFLAGS) -Wno-declaration-after-statement -Wno-tentative-definition-compat -Wno-implicit-void-ptr-cast
 # Debugging symbols, no sanitizers to allow the "leaks" utility to run
 CFLAGS_DEBUG=$(_CFLAGS) -O3 -g3
 # Optimized build to match release, but still with sanitization for testing

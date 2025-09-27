@@ -4,36 +4,53 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "tape.h"
+#include "tape_bit.h"
 #include "util.h"
+
+typedef unsigned long bit_block_t;
+
+#define BIT_BLOCK_SIZE (CHAR_BIT * sizeof (bit_unit_t))
+
+/*
+ * Contains an array of "syms" each consisting of sym_bits bits. They are stored packed in
+ * "units".
+ */
+struct bit_tape_t {
+	int n_syms;				// number of symbols in the tape
+	int sym_bits;			// number of bits per symbol
+	int rel_pos;			// relative position (0 = TM starting position)
+	int init_pos;			// initial position, to ensure mem_pos := rel_pos + init_pos is always within the array
+	bit_block_t *blocks;	// this should always point to an array of n_units(tape) units
+};
 
 /*
  * The number of units required to store n_syms of sym_bits each is the product divided
  * by UNIT_BITS, rounded up (achieved by adding UNIT_BITS - 1 before division).
  */
-static int n_units(const int n_syms, const int sym_bits)
+static int n_blocks_for(const int n_syms, const int sym_bits)
 {
 	return (n_syms * sym_bits + UNIT_BITS - 1) / UNIT_BITS;
 }
 
-struct tape_t tape_init(const unsigned n_syms, const unsigned sym_bits)
+struct bit_tape_t *bit_tape_init(const int n_syms, const int sym_bits)
 {
-	const struct tape_t tape = {
-		calloc(n_units(n_syms, sym_bits), sizeof *tape.units),
-		n_syms,
-		sym_bits,
-	};
+	const int n_blocks = n_blocks_for(n_syms, sym_bits);
+	const struct bit_tape_t *const tape = malloc(sizeof *tape + (size_t) n_blocks * sizeof *tape->blocks);
+	tape->n_syms = n_syms;
+	tape->sym_bits = sym_bits;
 	return tape;
 }
 
-void tape_free(struct tape_t *const tape)
+void bit_tape_free(struct tape_t *const tape)
 {
-    free(tape->units);
+    free(tape->blocks);
+	free(tape);
 }
 
-unit_t tape_read(const struct tape_t *const tape, const unsigned sym_idx)
+sym_t bit_tape_read(const struct bit_tape_t *const tape)
 {
-	// We're reading within the tape
+	const int sym_idx = tape->init_pos + tape->rel_pos;
+	// Check that we're reading within the tape
 	assert(0 <= sym_idx && sym_idx < tape->n_syms);
 
 	const int bit_from = sym_idx * tape->sym_bits;
@@ -57,9 +74,10 @@ unit_t tape_read(const struct tape_t *const tape, const unsigned sym_idx)
 	return low_unit | high_unit;
 }
 
-void tape_write(struct tape_t *const tape, unsigned sym_idx, unit_t sym)
+void bit_tape_write(struct bit_tape_t *const tape, const sym_t sym)
 {
-	// We're writing within the tape
+	const int sym_idx = tape->init_pos + tape->rel_pos;
+	// Check that we're writing within the tape
 	assert(0 <= sym_idx && sym_idx < tape->n_syms);
 
 	// The symbol cannot contain more than the allowed bits
@@ -87,6 +105,14 @@ void tape_write(struct tape_t *const tape, unsigned sym_idx, unit_t sym)
 	tape->units[unit_to] = (tape->units[unit_to] & ~high_mask) | ((sym & ~sym_mask) >> (tape->sym_bits - shift_high));
 }
 
+void bit_tape_move(sturct bit_tape_t *const tape, int delta)
+{
+	assert(delta == -1 || delta == 1);
+	// TODO refactor
+	tape->rel_pos += delta;
+	assert(0 <= tape->rel_pos + tape->init_pos && tape->rel_pos + tape->init_pos < tape->len);
+}
+
 static void test_basic(void)
 {
 	assert(UNIT_BITS == 64);
@@ -97,9 +123,9 @@ static void test_basic(void)
 }
 
 /*
- * Generates a pseudorandom symbol that's consisten for a given index.
+ * Generates a pseudorandom symbol that's consistent for a given index.
  */
-static unit_t prng_sym(int i, int sym_bits)
+static sym_t prng_sym(int i, int sym_bits)
 {
     const int seed = 0x12345678;
     srand(seed * i);
@@ -111,7 +137,7 @@ static void test_write_and_read(void)
 {
     const int n_syms = 1234;
     for (unsigned sym_bits = 1; sym_bits < UNIT_BITS; sym_bits++) {
-        struct tape_t tape = tape_init(n_syms, sym_bits);
+        struct bit_tape_t tape = tape_init(n_syms, sym_bits);
 
         const time_t t = time(0);
         for (int i = 0; i < n_syms; i++) {
@@ -127,14 +153,12 @@ static void test_write_and_read(void)
 			}
         }
 
-        tape_free(&tape);
+        bit_tape_free(&tape);
     }
 }
 
-void tape_test(void)
+void bit_tape_test(void)
 {
 	test_basic();
     test_write_and_read();
 }
-
-
