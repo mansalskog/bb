@@ -1,9 +1,11 @@
 .PRECIOUS: bin/%.o
 
+# Common compiler flags, should not be used by themselves
+_CFLAGS=-Wall -Wextra -std=c99 -ferror-limit=0
 # Note that we don't use floats except for some debugging info, so ffast-math is okay
-CFLAGS_RELEASE=-O3 -ffast-math -Wall -Wextra -std=c99 -ferror-limit=0 -DNDEBUG
+CFLAGS_RELEASE=-O3 -ffast-math -DNDEBUG $(_CFLAGS)
 # Testing compiler flags
-CFLAGS=-O0 -Wall -Wextra -std=c99 -g -ferror-limit=0
+CFLAGS_TEST=-O0 -g $(_CFLAGS)
 # Include as many linter checks as possible
 LINT_INCL=bugprone-*,cert-*,clang-analyzer-*,cppcoreguidelines-*,hicpp-*,linuxkernel-*,llvm-*,misc-*,performance-*,portability-*,readability-*
 # Disabled some checks because:
@@ -43,8 +45,8 @@ bin/fast: test.c $(COMMON_C)
 
 # static analysis
 check: $(COMMON_C)
-	# clang-check -analyze $^ -- $(CFLAGS)
-	clang-tidy $^ -checks='$(LINT_FILTERS)' -- $(CFLAGS)
+	# clang-check -analyze $^ -- $(CFLAGS_TEST)
+	clang-tidy $^ -checks='$(LINT_FILTERS)' -- $(CFLAGS_TEST)
 
 # dynamic analysis
 test: bin/test
@@ -53,11 +55,11 @@ test: bin/test
 	leaks --atExit -- $< -q
 
 bin/%: bin/%.o $(COMMON_O)
-	clang $(CFLAGS) $^ -o $@
+	clang $(CFLAGS_TEST) $^ -o $@
 
 bin/%.o: %.c
 	@ mkdir -p bin/
-	clang $(CFLAGS) -c $< -o $@
+	clang $(CFLAGS_TEST) -c $< -o $@
 
 clean:
 	rm -r bin/

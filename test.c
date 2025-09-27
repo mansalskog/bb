@@ -30,7 +30,7 @@ struct test_case_t {
 const struct test_case_t TEST_CASES[];
 const int N_TEST_CASES;
 
-void verify_test_case(const struct test_case_t *const tcase, int quiet)
+double verify_test_case(const struct test_case_t *const tcase, int quiet)
 {
 	clock_t t = clock();
 	struct table_t table = table_parse(tcase->txt);
@@ -43,7 +43,8 @@ void verify_test_case(const struct test_case_t *const tcase, int quiet)
 
 	t = clock();
 	machine_run(&machine, MAX_STEPS);
-	if (!quiet) printf("Ran in %fs\n", seconds(clock(), t));
+	const double runtime = seconds(clock(), t);
+	if (!quiet) printf("Ran in %fs\n", runtime);
 
 	if (machine.curr_step != tcase->steps) {
 		ERROR("Invalid number of steps for machine '%s', expected %u, got %u\n",
@@ -51,6 +52,8 @@ void verify_test_case(const struct test_case_t *const tcase, int quiet)
 	}
 
 	tape_free(&tape);
+
+	return runtime;
 }
 
 void unknown_argument(const char *arg0, const char *arg)
@@ -78,10 +81,14 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-	if (!quiet) printf("Verifying test cases...\n");
-	for (int i = 0; i < N_TEST_CASES; i++) {
-		verify_test_case(TEST_CASES + i, quiet);
+	double tot_runtime = 0.0;
+	for (int j = 0; j < 10; j++) {
+		if (!quiet) printf("Verifying test cases...\n");
+		for (int i = 0; i < N_TEST_CASES; i++) {
+			tot_runtime += verify_test_case(TEST_CASES + i, quiet);
+		}
 	}
+	printf("Total runtime: %fs\n", tot_runtime);
 	return 0;
 }
 
