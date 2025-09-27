@@ -27,7 +27,7 @@ struct test_case_t {
 const struct test_case_t TEST_CASES[];
 const int N_TEST_CASES;
 
-void verify_test_case(const struct test_case_t *const tcase, int quiet)
+double verify_test_case(const struct test_case_t *const tcase, int quiet)
 {
 	clock_t t = clock();
 	struct tm_def_t *def = tm_def_parse(tcase->txt);
@@ -52,7 +52,8 @@ void verify_test_case(const struct test_case_t *const tcase, int quiet)
 		if (run->steps >= MAX_STEPS)
 			break;
 	}
-	if (!quiet) printf("Ran %d steps in %fs\n", run->steps, seconds(clock(), t));
+	const double runtime = seconds(clock(), t);
+	if (!quiet) printf("Ran %d steps in %fs\n", run->steps, runtime);
 
 	assert(tm_run_halted(run));
 
@@ -61,6 +62,8 @@ void verify_test_case(const struct test_case_t *const tcase, int quiet)
 
 	tm_run_free(run);
 	tm_def_free(def);
+
+	return runtime;
 }
 
 void unknown_argument(const char *arg0, const char *arg)
@@ -73,6 +76,7 @@ void unknown_argument(const char *arg0, const char *arg)
 int main(int argc, char **argv)
 {
 	int quiet = 0;
+	int benchmark = 0;
 	for (int i = 1; i < argc; i++) {
 		size_t len = strlen(argv[i]);
 		if (len != 2 || argv[i][0] != '-') {
@@ -83,15 +87,24 @@ int main(int argc, char **argv)
 		case 'q':
 			quiet = 1;
 			break;
+		case 'b':
+			benchmark = 1;
+			break;
 		default:
 			unknown_argument(argv[0], argv[i]);
 			return 1;
 		}
 	}
-	if (!quiet) printf("Verifying test cases...\n");
-	for (int i = 0; i < N_TEST_CASES; i++) {
-		verify_test_case(TEST_CASES + i, quiet);
+	// Run test cases 10 times for benchmarking
+	const int n_runs = benchmark ? 10 : 1;
+	double tot_runtime = 0.0;
+	for (int j = 0; j < n_runs; j++) {
+		if (!quiet) printf("Verifying test cases...\n");
+		for (int i = 0; i < N_TEST_CASES; i++) {
+			tot_runtime += verify_test_case(TEST_CASES + i, quiet);
+		}
 	}
+	printf("Total runtime: %fs\n", tot_runtime);
 	return 0;
 }
 

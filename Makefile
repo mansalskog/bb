@@ -31,7 +31,7 @@ HEADERS=$(wildcard *.h)
 
 COMMON_C=tm_com.c tm_run.c tm_def.c tape_flat.c tape_rle.c util.c
 
-all: test
+all: bin/rel_test
 
 # static analysis of all source files
 check: $(SOURCES) $(HEADERS)
