@@ -74,9 +74,9 @@ int tm_run_step(struct tm_run_t *const run)
 	const state_t i_state = run->state;
 	state_t o_state = 0;
 	for (int i = 0; i < MAX_TAPES; i++) {
-		if (!run->tapes[i])
-			continue;
 		struct tape_t *tape = run->tapes[i];
+		if (!tape)
+			continue;
 
 		// Read the symbol
 		const sym_t i_sym = tape->read(tape);

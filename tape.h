@@ -20,4 +20,6 @@ struct tape_t {
 	void (*move)(struct tape_t *tape, int delta);
 };
 
+int tape_cmp(struct tape_t *t1, struct tape_t *t2, int window);
+
 #endif
