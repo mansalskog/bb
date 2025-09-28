@@ -1,19 +1,22 @@
 .PRECIOUS: bin/%.o
 
 _TMP_CFLAGS=-Wno-missing-prototypes -Wno-missing-variable-declarations -Wno-unsafe-buffer-usage
-# Common compiler flags
-_CFLAGS=-std=c99 -pedantic -ferror-limit=0 -Weverything -Wno-padded $(_TMP_CFLAGS) -Wno-declaration-after-statement -Wno-tentative-definition-compat -Wno-implicit-void-ptr-cast
-# Debugging symbols, no sanitizers to allow the "leaks" utility to run
-CFLAGS_DEBUG=$(_CFLAGS) -O3 -g3
+### Disabled some compiler warnings ###
+# declaration-after-statement				I use C99 and don't need C89 compatibility
+# tentative-definition-compat				I don't need C++ compatibility
+# implicit-void-ptr-cast					This is a language feature, explicit casts are just noise
+WFLAGS_EXCL=-Wno-declaration-after-statement -Wno-tentative-definition-compat -Wno-implicit-void-ptr-cast
+# Incldue as many compiler warnings as possible
+WFLAGS=-std=c99 -pedantic -ferror-limit=0 -Weverything -Wno-padded $(_TMP_CFLAGS) $(WFLAGS_EXCL)
+# Debugging symbols
+CFLAGS_DEBUG=$(WFLAGS) -O3 -g3 -ffast-math -fsanitize=address,undefined,integer
 # Optimized build to match release, but still with sanitization for testing
-CFLAGS_TEST=$(_CFLAGS) -O3 -ffast-math -fsanitize=address,undefined,integer
-# "Release" build, as fast as possible
-# Note that we don't use floats except for some debugging info, so ffast-math is okay
-CFLAGS_RELEASE=$(_CFLAGS) -O3 -ffast-math -DNDEBUG
+CFLAGS_TEST=$(WFLAGS) -O3 -ffast-math -fsanitize=address,undefined,integer
+# -DNDEBUG is not used, we always want asserts
 
 # Include as many linter checks as possible
 LINT_INCL=bugprone-*,cert-*,clang-analyzer-*,cppcoreguidelines-*,hicpp-*,linuxkernel-*,llvm-*,misc-*,performance-*,portability-*,readability-*
-# Disabled some checks because:
+### Disabled some linter checks ###
 # bugprone-easily-swappable-parameters			This is too much work to "fix", and most functions have a logical paramter order.
 # readability-identifier-length					I prefer maximum(a, b) to maximum(num1, num2).
 # readability-math-missing-parentheses			I know PEMDAS.
@@ -41,25 +44,16 @@ VERIFIED_H=$(filter-out $(NOT_VERIFIED),$(ALL_H))
 COMMON_C=tm_run.c tm_def.c tape_flat.c tape_rle.c util.c
 COMMON_H=$(subst .c,.h,$(COMMON_C))
 
-all: bin/rel_test
+# main target: simply compile all binaries
+all: bin/tst_test bin/dbg_test
 
 # static analysis of all source files
 check: $(VERIFIED_C) $(VERIFIED_H)
-	# clang-check -analyze $^ -- $(CFLAGS_DEBUG)
 	clang-tidy $^ -checks='$(LINT_FILTERS)' -- $(CFLAGS_DEBUG)
 
-# dynamic analysis
-test: bin/tst_test bin/dbg_test
-	# run test with sanitizers
+# dynamic analysis of certain binaries
+test: bin/tst_test
 	bin/tst_test
-	# check for memory leaks, OSX specific and ANNOYING (codesign and other BS), just use valgrind instead if you can
-	# run memory leak checker without address sanitizer
-	# disabled due to the tool being stupid and useless "unable to inspect heap ranges of target process; it may be using a malloc replacement library without the required support"
-	# leaks --atExit -- bin/dbg_test -q
-
-bin/rel_%: %.c $(COMMON_C) $(COMMON_H)
-	@ mkdir -p bin/
-	clang $(CFLAGS_RELEASE) $< $(COMMON_C) -o $@
 
 bin/tst_%: %.c $(COMMON_C) $(COMMON_H)
 	@ mkdir -p bin/

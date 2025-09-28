@@ -43,7 +43,7 @@ struct tape_t *flat_tape_init( const unsigned sym_bits, const int len, const int
 	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
 
 	struct flat_tape_t *const data = malloc(sizeof *data);
-	data->syms = malloc((size_t) len * sizeof *data->syms);
+	data->syms = calloc((size_t) len, sizeof *data->syms);
 	data->len = len;
 	data->rel_pos = 0;
 	data->init_pos = init_pos;
