@@ -4,8 +4,12 @@
 #include <string.h>
 #include <time.h>
 
+#include "tape.h"
+#include "tape_flat.h"
+#include "tape_rle.h"
 #include "tm_def.h"
 #include "tm_run.h"
+#include "util.h"
 
 // Upper limit on number of steps. NB not a hard limit, may be exceeded by up to BATCH_STEPS - 1.
 const int MAX_STEPS = (INT_MAX >> 4);
@@ -39,7 +43,12 @@ double verify_test_case(const struct test_case_t *const tcase, int quiet)
 	}
 
 	t = clock();
-	struct tm_run_t *run = tm_run_init(def, 1, 16, 8);
+	const unsigned sym_bits = ceil_log2((unsigned) def->n_syms);
+	struct tape_t *rle_tape = rle_tape_init(sym_bits);
+	const int flat_tape_len = 16;
+	const int flat_tape_origin = 8;
+	struct tape_t *flat_tape = flat_tape_init(sym_bits, flat_tape_len, flat_tape_origin);
+	struct tm_run_t *run = tm_run_init(def, rle_tape, flat_tape, 0);
 	if (!quiet) printf("Initialized in %fs\n", seconds(clock(), t));
 
 	t = clock();
@@ -62,6 +71,8 @@ double verify_test_case(const struct test_case_t *const tcase, int quiet)
 
 	tm_run_free(run);
 	tm_def_free(def);
+	rle_tape->free(rle_tape);
+	flat_tape->free(flat_tape);
 
 	return runtime;
 }

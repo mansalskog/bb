@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "tm_com.h"
+#include "tape.h"
+#include "util.h"
+
 #include "tm_def.h"
 
 /*
@@ -42,7 +44,7 @@ struct tm_instr_t tm_def_lookup(const struct tm_def_t *const def, const state_t 
 static struct tm_def_t *tm_def_init(const int n_syms, const int n_states)
 {
 	assert(n_syms > 0 && n_states > 0);
-	const size_t tab_size = (size_t) (n_syms * n_states);
+	const size_t tab_size = (size_t) n_syms * (size_t) n_states;
 	struct tm_def_t *def = malloc(sizeof *def + tab_size * sizeof *def->instr_tab);
 	def->n_syms = n_syms;
 	def->n_states = n_states;
@@ -83,8 +85,8 @@ struct tm_def_t *tm_def_parse(const char *const txt)
 
 	struct tm_def_t *def = tm_def_init(n_syms, n_states);
 
-	for (state_t i_state = 0; i_state < def->n_states; i_state++) {
-		for (sym_t i_sym = 0; i_sym < def->n_syms; i_sym++) {
+	for (state_t i_state = 0; i_state < (state_t) def->n_states; i_state++) {
+		for (sym_t i_sym = 0; i_sym < (sym_t) def->n_syms; i_sym++) {
 			const int txt_idx = i_state * (def->n_syms * 3 + 1) + i_sym * 3; // base index into txt
 
 			const char sym_c = txt[txt_idx];
@@ -154,9 +156,9 @@ void tm_def_print(const struct tm_def_t *const def, const int directed)
 	for (int i_sym = 0; i_sym < def->n_syms; i_sym++) {
 		printf(" %d  ", i_sym + 1);
 	}
-	for (state_t i_state = 0; i_state < def->n_states; i_state++) {
+	for (state_t i_state = 0; i_state < (state_t) def->n_states; i_state++) {
 		printf("\n%c ", 'A' + i_state);
-		for (sym_t i_sym = 0; i_sym < def->n_syms; i_sym++) {
+		for (sym_t i_sym = 0; i_sym < (sym_t) def->n_syms; i_sym++) {
 			struct tm_instr_t instr = tm_def_lookup(def, i_state, i_sym);
 			printf("%d%c", // NB we use decimal here but binary in tape...
 				instr.sym,

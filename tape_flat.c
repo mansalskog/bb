@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "tm_com.h"
+#include "tape.h"
 #include "util.h"
 
 #include "tape_flat.h"
@@ -25,9 +25,11 @@ struct flat_tape_t {
 /*
  * Frees the memory used by a flat tape.
  */
-void flat_tape_free(struct flat_tape_t *const tape)
+void flat_tape_free(struct tape_t *const tape)
 {
-	free(tape->syms);
+	struct flat_tape_t *const data = tape->data;
+	free(data->syms);
+	free(data);
 	free(tape);
 }
 
@@ -35,17 +37,24 @@ void flat_tape_free(struct flat_tape_t *const tape)
  * Creates a flat tape of the specified initial size filled with zeros.
  * The absolute position is initialized to zero.
  */
-struct flat_tape_t *flat_tape_init(const int len, const int init_pos, const unsigned sym_bits)
+struct tape_t *flat_tape_init( const unsigned sym_bits, const int len, const int init_pos)
 {
 	assert(0 <= init_pos && init_pos < len);			// This ensures that our intial position is within the syms array
 	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
 
-	struct flat_tape_t *const tape = malloc(sizeof *tape);
-	tape->syms = malloc((size_t) len * sizeof *tape->syms);
-	tape->len = len;
-	tape->rel_pos = 0;
-	tape->init_pos = init_pos;
-	tape->sym_bits = sym_bits;
+	struct flat_tape_t *const data = malloc(sizeof *data);
+	data->syms = malloc((size_t) len * sizeof *data->syms);
+	data->len = len;
+	data->rel_pos = 0;
+	data->init_pos = init_pos;
+	data->sym_bits = sym_bits;
+
+	struct tape_t *const tape = malloc(sizeof *tape);
+	tape->data = data;
+	tape->free = flat_tape_free;
+	tape->write = flat_tape_write;
+	tape->read = flat_tape_read;
+	tape->move = flat_tape_move;
 
 	return tape;
 }
@@ -99,19 +108,21 @@ void flat_tape_print(const struct flat_tape_t *const tape, const int ctx, const 
  * side we actually went outside. Depends on the statistical properties of TMs, e.g.
  * "bouncers" (allocate both sides is good) vs "translated cycles" (allocate one side is good), etc.
  */
-void flat_tape_move(struct flat_tape_t *const tape, int delta)
+void flat_tape_move(struct tape_t *const tape, int delta)
 {
+	struct flat_tape_t *const data = tape->data;
+
 	// This defines the min/max allowed tape head positions, namely INT_MIN+1 and INT_MAX-1
 	assert(delta == -1 || delta == 1);
 	if (delta == -1)
-		assert(INT_MIN + 2 < tape->rel_pos && tape->rel_pos < INT_MAX - 1);
+		assert(INT_MIN + 2 < data->rel_pos && data->rel_pos < INT_MAX - 1);
 	else
-		assert(INT_MIN + 1 < tape->rel_pos && tape->rel_pos < INT_MAX - 2);
+		assert(INT_MIN + 1 < data->rel_pos && data->rel_pos < INT_MAX - 2);
 
-	const int mem_pos = tape->rel_pos + tape->init_pos;
-	if (mem_pos + delta < 0 || mem_pos + delta >= tape->len) {
+	const int mem_pos = data->rel_pos + data->init_pos;
+	if (mem_pos + delta < 0 || mem_pos + delta >= data->len) {
 		// Ran out of tape, allocate more
-		const int old_len = tape->len;
+		const int old_len = data->len;
 		const int new_len = old_len * 2;
 		sym_t *const new_syms = malloc(sizeof *new_syms * (size_t) new_len);
 
@@ -123,33 +134,35 @@ void flat_tape_move(struct flat_tape_t *const tape, int delta)
 		 */
 		const int offset = old_len / 2;
 		memset(new_syms, 0, (size_t) offset * sizeof *new_syms);
-		memcpy(new_syms + (ptrdiff_t) offset, tape->syms, (size_t) old_len * sizeof *new_syms);
+		memcpy(new_syms + (ptrdiff_t) offset, data->syms, (size_t) old_len * sizeof *new_syms);
 		memset(new_syms + (ptrdiff_t) (offset + old_len), 0, (size_t) (new_len - old_len - offset) * sizeof *new_syms);
 
-		tape->len = new_len;
-		free(tape->syms);
-		tape->syms = new_syms;
-		tape->init_pos += offset;
+		data->len = new_len;
+		free(data->syms);
+		data->syms = new_syms;
+		data->init_pos += offset;
 	}
 
-	tape->rel_pos += delta;
-	assert(0 <= tape->rel_pos + tape->init_pos && tape->rel_pos + tape->init_pos < tape->len);
+	data->rel_pos += delta;
+	assert(0 <= data->rel_pos + data->init_pos && data->rel_pos + data->init_pos < data->len);
 }
 
 /*
  * Writes a symbol to the tape.
  */
-void flat_tape_write(const struct flat_tape_t *const tape, const sym_t sym)
+void flat_tape_write(struct tape_t *const tape, const sym_t sym)
 {
-	tape->syms[tape->rel_pos + tape->init_pos] = sym;
+	struct flat_tape_t *const data = tape->data;
+	data->syms[data->rel_pos + data->init_pos] = sym;
 }
 
 /*
  * Reads a symbol from the tape.
  */
-sym_t flat_tape_read(const struct flat_tape_t *const tape)
+sym_t flat_tape_read(const struct tape_t *const tape)
 {
-	return tape->syms[tape->rel_pos + tape->init_pos];
+	const struct flat_tape_t *const data = tape->data;
+	return data->syms[data->rel_pos + data->init_pos];
 }
 
 /*

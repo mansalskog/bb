@@ -1,7 +1,11 @@
 #ifndef TM_RUN_H
 #define TM_RUN_H
 
+#include "tape.h"
 #include "tm_def.h"
+#include "util.h"
+
+#define MAX_TAPES 3
 
 /*
  * Represents a given run of a TM, which contains a reference to the transition
@@ -12,9 +16,7 @@ struct tm_run_t {
 	// NOTE that the transition table is just a reference and not managed by this struct!
 	const struct tm_def_t *def;	// transition table (reference)
 
-	// these variables "belong" to the run and are allocated and freed, etc.
-	struct rle_tape_t *rle_tape;		// tape (RLE representation)
-	struct flat_tape_t *flat_tape;		// tape (flat representation)
+	struct tape_t *tapes[MAX_TAPES];	// list of all the tapes to use, unused are set to NULL
 
 	int steps;							// the number of steps performed
 	state_t state;						// the current state
@@ -23,11 +25,10 @@ struct tm_run_t {
 };
 
 
-struct tm_run_t *tm_run_init(const struct tm_def_t *const def, const int use_rle_tape, const int flat_tape_len, const int flat_tape_off);
-void tm_run_free(struct tm_run_t *const run);
-int tm_run_halted(const struct tm_run_t *const run);
+struct tm_run_t *tm_run_init(const struct tm_def_t *def, struct tape_t *tape1, struct tape_t *tape2, struct tape_t *tape3);
+void tm_run_free(struct tm_run_t *run);
+int tm_run_halted(const struct tm_run_t *run);
 int tm_run_step(struct tm_run_t *run);
 int tm_run_steps(struct tm_run_t *run, int max_steps);
-void tm_run_print_tape(const struct tm_run_t *const run, const int directed);
 
 #endif

@@ -4,7 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "tm_com.h"
+#include "tape.h"
+#include "util.h"
 
 #include "tape_rle.h"
 
@@ -34,9 +35,10 @@ struct rle_tape_t {
 /*
  * Frees a RLE tape together with all its elements.
  */
-void rle_tape_free(struct rle_tape_t *const tape)
+void rle_tape_free(struct tape_t *const tape)
 {
-	struct rle_elem_t *elem = tape->curr;
+	struct rle_tape_t *data = tape->data;
+	struct rle_elem_t *elem = data->curr;
 	// Move to the leftmost elem
 	while (elem->left) elem = elem->left;
 	// Free each element
@@ -45,7 +47,9 @@ void rle_tape_free(struct rle_tape_t *const tape)
 		free(elem);
 		elem = next;
 	}
-	// Free container struct
+	// Free data container struct
+	free(data);
+	// Free outer container struct
 	free(tape);
 }
 
@@ -67,15 +71,22 @@ struct rle_elem_t *rle_elem_init(const sym_t sym, const int len)
  * Constructs a new blank tape using RLE representation, for
  * a given symbol width.
  */
-struct rle_tape_t *rle_tape_init(const unsigned sym_bits)
+struct tape_t *rle_tape_init(const unsigned sym_bits)
 {
 	assert(1 <= sym_bits && sym_bits <= MAX_SYM_BITS);
 
-	struct rle_tape_t *tape = malloc(sizeof *tape);
-	tape->curr = rle_elem_init(0, 1);
-	tape->rle_pos = 0;
-	tape->rel_pos = 0;
-	tape->sym_bits = sym_bits;
+	struct rle_tape_t *data = malloc(sizeof *data);
+	data->curr = rle_elem_init(0, 1);
+	data->rle_pos = 0;
+	data->rel_pos = 0;
+	data->sym_bits = sym_bits;
+
+	struct tape_t *tape = malloc(sizeof *tape);
+	tape->data = data;
+	tape->free = rle_tape_free;
+	tape->read = rle_tape_read;
+	tape->write = rle_tape_write;
+	tape->move = rle_tape_move;
 	return tape;
 }
 
@@ -154,29 +165,31 @@ void rle_elem_link(struct rle_elem_t *const left, struct rle_elem_t *const right
  * Writes to the current RLE, or the left or right, as appropriate.
  * Thus may modify the current RLE and the current position.
  */
-void rle_tape_write(struct rle_tape_t *const tape, sym_t sym)
+void rle_tape_write(struct tape_t *const tape, const sym_t sym)
 {
-	struct rle_elem_t *const orig = tape->curr;
+	struct rle_tape_t *const data = tape->data;
+
+	struct rle_elem_t *const orig = data->curr;
 	if (orig->sym == sym) {
 		// Nothing to do
 		return;
 	}
 
-	if (tape->rle_pos == 0 && orig->left && orig->left->sym == sym) {
+	if (data->rle_pos == 0 && orig->left && orig->left->sym == sym) {
 		// Extend left neighbor
-		tape->curr = orig->left;
-		tape->curr->len++;
-		tape->rle_pos = tape->curr->len - 1;
+		data->curr = orig->left;
+		data->curr->len++;
+		data->rle_pos = data->curr->len - 1;
 
 		rle_elem_shrink(orig);
 		return;
 	}
 
-	if (tape->rle_pos == orig->len && orig->right && orig->right->sym == sym) {
+	if (data->rle_pos == orig->len && orig->right && orig->right->sym == sym) {
 		// Extend right neighbor
-		tape->curr = orig->right;
-		tape->curr->len++;
-		tape->rle_pos = 0;
+		data->curr = orig->right;
+		data->curr->len++;
+		data->rle_pos = 0;
 
 		rle_elem_shrink(orig);
 		return;
@@ -185,7 +198,7 @@ void rle_tape_write(struct rle_tape_t *const tape, sym_t sym)
 	// Create new in middle / left / right
 	struct rle_elem_t *const new_mid = rle_elem_init(sym, 1);
 
-	const int left_len = tape->rle_pos;
+	const int left_len = data->rle_pos;
 	if (left_len > 0) {
 		// We have "leftover" symbols to the left
 		struct rle_elem_t *const new_left = rle_elem_init(orig->sym, left_len);
@@ -195,7 +208,7 @@ void rle_tape_write(struct rle_tape_t *const tape, sym_t sym)
 		rle_elem_link(orig->left, new_mid);
 	}
 
-	const int right_len = orig->len - tape->rle_pos - 1;
+	const int right_len = orig->len - data->rle_pos - 1;
 	if (right_len > 0) {
 		// We have "leftover" symbols to the left
 		struct rle_elem_t *const new_right = rle_elem_init(orig->sym, right_len);
@@ -213,17 +226,18 @@ void rle_tape_write(struct rle_tape_t *const tape, sym_t sym)
 	assert(new_mid->sym == sym);
 
 	// Update tape pointers and free removed element
-	tape->curr = new_mid;
-	tape->rle_pos = 0;
+	data->curr = new_mid;
+	data->rle_pos = 0;
 	free(orig);
 }
 
 /*
  * Reads a symbol from the RLE tape.
  */
-sym_t rle_tape_read(const struct rle_tape_t *const tape)
+sym_t rle_tape_read(const struct tape_t *const tape)
 {
-	return tape->curr->sym;
+	const struct rle_tape_t *const data = tape->data;
+	return data->curr->sym;
 }
 
 /*
@@ -233,70 +247,72 @@ sym_t rle_tape_read(const struct rle_tape_t *const tape)
  * piece of the infinite blank tape. Note that if the current element's
  * symbol is a zero, we instead excent the current element.
  */
-void rle_tape_move(struct rle_tape_t *const tape, int delta)
+void rle_tape_move(struct tape_t *const tape, int delta)
 {
+	struct rle_tape_t *const data = tape->data;
+
 	assert(delta == -1 || delta == 1);
 	// This defines the min/max allowed tape head positions, namely INT_MIN+1 and INT_MAX-1
 	assert(delta == -1 || delta == 1);
 	if (delta == -1)
-		assert(INT_MIN + 2 < tape->rel_pos && tape->rel_pos < INT_MAX - 1);
+		assert(INT_MIN + 2 < data->rel_pos && data->rel_pos < INT_MAX - 1);
 	else
-		assert(INT_MIN + 1 < tape->rel_pos && tape->rel_pos < INT_MAX - 2);
+		assert(INT_MIN + 1 < data->rel_pos && data->rel_pos < INT_MAX - 2);
 
 	// First update the relative position
-	tape->rel_pos += delta;
+	data->rel_pos += delta;
 
-	struct rle_elem_t *const orig = tape->curr;
+	struct rle_elem_t *const orig = data->curr;
 
-	if (tape->rle_pos + delta < 0) {
+	if (data->rle_pos + delta < 0) {
 		// Moving out of the element, to the left side
 		if (orig->left == NULL) {
 			// End of tape
 			if (orig->sym == 0) {
 				// Extend the current run of zeros by one
 				orig->len++;
-				assert(tape->rle_pos == 0); // by assumption
+				assert(data->rle_pos == 0); // by assumption
 			} else {
 				// Create a new zero to the left and move into it
 				struct rle_elem_t *const new_left = rle_elem_init(0, 1);
 				rle_elem_link(new_left, orig);
-				tape->curr = orig->left;
-				tape->rle_pos = tape->curr->len - 1;
+				data->curr = orig->left;
+				data->rle_pos = data->curr->len - 1;
 			}
 		} else {
 			// Move into the existing left element
-			tape->curr = orig->left;
-			tape->rle_pos = tape->curr->len - 1;
+			data->curr = orig->left;
+			data->rle_pos = data->curr->len - 1;
 		}
 		return;
 	}
 
-	if (tape->rle_pos + delta >= orig->len) {
+	if (data->rle_pos + delta >= orig->len) {
 		// Moving out of the element, to the right
 		if (orig->right == NULL) {
 			if (orig->sym == 0) {
 				// Extend the current run of zeros by one
 				orig->len++;
-				tape->rle_pos++;
-				assert(tape->rle_pos == orig->len - 1); // by assumption
+				data->rle_pos++;
+				assert(data->rle_pos == orig->len - 1); // by assumption
 			} else {
 				// Create a new zero to the right and move into it
 				struct rle_elem_t *const new_right = rle_elem_init(0, 1);
 				rle_elem_link(orig, new_right);
-				tape->curr = orig->right;
-				tape->rle_pos = tape->curr->len - 1;
+				data->curr = orig->right;
+				data->rle_pos = data->curr->len - 1;
 			}
 		} else {
 			// Move into the existing right element
-			tape->curr = orig->right;
-			tape->rle_pos = 0;
+			data->curr = orig->right;
+			data->rle_pos = 0;
 		}
 		return;
 	}
 
 	// Simply move within the element
-	tape->rle_pos += delta;
-	assert(0 <= tape->rle_pos && tape->rle_pos < tape->curr->len); // check invariants
+	data->rle_pos += delta;
+	assert(0 <= data->rle_pos && data->rle_pos < data->curr->len); // check invariants
 }
 
 /*

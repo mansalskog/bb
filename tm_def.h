@@ -1,7 +1,8 @@
 #ifndef TM_DEF_H
 #define TM_DEF_H
 
-#include "tm_com.h"
+#include "tape.h"
+#include "util.h"
 
 /*
  * Represents an "instruction" in the transition table.
