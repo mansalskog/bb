@@ -170,7 +170,7 @@ sym_t flat_tape_read(const struct tape_t *const tape)
  * This requires a full scan of the tape. We could perhapst add variables for the leftmost and
  * rightmost position visited, but this is probably really fast.
  */
-int flat_tape_count_nonzero(const struct flat_tape_t *const tape) {
+static int flat_tape_count_nonzero(const struct flat_tape_t *const tape) {
 	int nonzero = 0;
 	for (int i = 0; i < tape->len; i++) {
 		if (tape->syms[i] != 0)

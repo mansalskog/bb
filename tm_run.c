@@ -12,9 +12,7 @@
 
 #include "tm_run.h"
 
-///// Basic utility and output functions /////
-
-void instr_print(const struct tm_instr_t *const instr, const unsigned sym_bits, const int directed) {
+static void instr_print(const struct tm_instr_t *const instr, const unsigned sym_bits, const int directed) {
 	print_state_and_sym(instr->state, instr->sym, sym_bits, directed);
 	printf("%c\n", instr->dir == DIR_LEFT ? 'L' : 'R');
 }

@@ -1,13 +1,13 @@
 .PRECIOUS: bin/%.o
 
-_TMP_CFLAGS=-Wno-missing-prototypes -Wno-missing-variable-declarations -Wno-unsafe-buffer-usage
 ### Disabled some compiler warnings ###
 # declaration-after-statement				I use C99 and don't need C89 compatibility
 # tentative-definition-compat				I don't need C++ compatibility
 # implicit-void-ptr-cast					This is a language feature, explicit casts are just noise
-WFLAGS_EXCL=-Wno-declaration-after-statement -Wno-tentative-definition-compat -Wno-implicit-void-ptr-cast
+# unsafe-buffer-usage						All buffer usage in C is (arguably) unsafe
+WFLAGS_EXCL=-Wno-declaration-after-statement -Wno-tentative-definition-compat -Wno-implicit-void-ptr-cast -Wno-unsafe-buffer-usage
 # Incldue as many compiler warnings as possible
-WFLAGS=-std=c99 -pedantic -ferror-limit=0 -Weverything -Wno-padded $(_TMP_CFLAGS) $(WFLAGS_EXCL)
+WFLAGS=-std=c99 -pedantic -ferror-limit=0 -Weverything -Wno-padded $(WFLAGS_EXCL)
 # Debugging symbols
 CFLAGS_DEBUG=$(WFLAGS) -O3 -g3 -ffast-math -fsanitize=address,undefined,integer
 # Optimized build to match release, but still with sanitization for testing
@@ -41,11 +41,11 @@ NOT_VERIFIED=tape_bit.h tape_bit.c
 VERIFIED_C=$(filter-out $(NOT_VERIFIED),$(ALL_C))
 VERIFIED_H=$(filter-out $(NOT_VERIFIED),$(ALL_H))
 
-COMMON_C=tm_run.c tm_def.c tape_flat.c tape_rle.c util.c
+COMMON_C=tm_run.c tm_def.c tape_flat.c tape_rle.c util.c test_case.c
 COMMON_H=$(subst .c,.h,$(COMMON_C))
 
-# main target: simply compile all binaries
-all: bin/tst_test bin/dbg_test
+# main target: simply compile the debug binary
+all: bin/tst_test
 
 # static analysis of all source files
 check: $(VERIFIED_C) $(VERIFIED_H)

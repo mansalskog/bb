@@ -21,6 +21,49 @@ struct rle_elem_t {
 };
 
 /*
+ * Constructs an "initial" RLE element, which has no left or right
+ * neighbor, with the given symbol and length.
+ */
+static struct rle_elem_t *rle_elem_init(const sym_t sym, const int len)
+{
+	struct rle_elem_t *elem = malloc(sizeof *elem);
+	elem->left = NULL;
+	elem->right = NULL;
+	elem->sym = sym;
+	elem->len = len;
+	return elem;
+}
+
+/*
+ * Shrinks the given element by one symbol. If the length
+ * is zero it is removed from the tape and its neighbors
+ * are linked instead. The element's memory is then freed.
+ */
+static void rle_elem_shrink(struct rle_elem_t *const elem)
+{
+	elem->len--;
+	if (elem->len <= 0) {
+		if (elem->left)
+			elem->left->right = elem->right;
+		if (elem->right)
+			elem->right->left = elem->left;
+		free(elem);
+	}
+}
+
+/*
+ * Links two RLEs by setting the neighbor pointers as appropriate.
+ * NULLs are allowed as inputs.
+ */
+static void rle_elem_link(struct rle_elem_t *const left, struct rle_elem_t *const right)
+{
+	if (left)
+		left->right = right;
+	if (right)
+		right->left = left;
+}
+
+/*
  * A run-length encoding based tape representation as
  * a linked list of runs of repeating symbols.
  */
@@ -51,20 +94,6 @@ void rle_tape_free(struct tape_t *const tape)
 	free(data);
 	// Free outer container struct
 	free(tape);
-}
-
-/*
- * Constructs an "initial" RLE element, which has no left or right
- * neighbor, with the given symbol and length.
- */
-struct rle_elem_t *rle_elem_init(const sym_t sym, const int len)
-{
-	struct rle_elem_t *elem = malloc(sizeof *elem);
-	elem->left = NULL;
-	elem->right = NULL;
-	elem->sym = sym;
-	elem->len = len;
-	return elem;
 }
 
 /*
@@ -130,35 +159,6 @@ void rle_tape_print(const struct rle_tape_t *const tape, const state_t state, co
 		elem = elem->right;
 	} while (elem);
 	printf("...\n");
-}
-
-/*
- * Shrinks the given element by one symbol. If the length
- * is zero it is removed from the tape and its neighbors
- * are linked instead. The element's memory is then freed.
- */
-void rle_elem_shrink(struct rle_elem_t *const elem)
-{
-	elem->len--;
-	if (elem->len <= 0) {
-		if (elem->left)
-			elem->left->right = elem->right;
-		if (elem->right)
-			elem->right->left = elem->left;
-		free(elem);
-	}
-}
-
-/*
- * Links two RLEs by setting the neighbor pointers as appropriate.
- * NULLs are allowed as inputs.
- */
-void rle_elem_link(struct rle_elem_t *const left, struct rle_elem_t *const right)
-{
-	if (left)
-		left->right = right;
-	if (right)
-		right->left = left;
 }
 
 /*
@@ -319,7 +319,7 @@ void rle_tape_move(struct tape_t *const tape, int delta)
  * Counts the total number of nonzero symbols in the tape
  * by doing a full scan of the entire tape
  */
-int rle_count_nonzero(const struct rle_tape_t *const tape)
+static int rle_count_nonzero(const struct rle_tape_t *const tape)
 {
 	const struct rle_elem_t *elem = tape->curr;
 	int nonzero = 0;
