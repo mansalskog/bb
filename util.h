@@ -2,6 +2,7 @@
 #define TM_UTIL_H
 
 #include <stdlib.h>
+#include <time.h>
 
 #include "tape.h"
 
@@ -23,6 +24,7 @@ typedef unsigned char state_t;
 // Sentinel value for representing undefined states.
 #define STATE_UNDEF ('Z' - 'A')
 
+double seconds(clock_t t1, clock_t t0);
 int maximum(int a, int b);
 unsigned ceil_log2(unsigned n);
 unsigned long bitmask(unsigned from, unsigned to);

@@ -9,7 +9,7 @@
 WFLAGS_EXCL=-Wno-declaration-after-statement -Wno-tentative-definition-compat -Wno-implicit-void-ptr-cast -Wno-unsafe-buffer-usage -Wno-unused-function
 # Incldue as many compiler warnings as possible
 WFLAGS=-std=c99 -pedantic -ferror-limit=0 -Weverything -Wno-padded $(WFLAGS_EXCL)
-SANFLAGS=-fsanitize=address,undefined,implicit-conversion,local-bounds,nullability
+SANFLAGS=-fsanitize=address,leak,undefined,implicit-conversion,local-bounds,nullability
 # Debugging symbols
 CFLAGS_DEBUG=$(WFLAGS) -O3 -g3 -ffast-math $(SANFLAGS)
 # Optimized build to match release, but still with sanitization for testing
@@ -48,7 +48,7 @@ COMMON_C=tm_run.c tm_def.c tape.c tape_flat.c tape_rle.c tape_bit.c util.c test_
 COMMON_H=$(subst .c,.h,$(COMMON_C))
 
 # main target: simply compile the debug binary
-all: bin/tst_test
+all: bin/tst_test bin/tst_comp
 
 # static analysis of all source files
 check: $(VERIFIED_C) $(VERIFIED_H)

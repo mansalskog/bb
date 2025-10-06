@@ -8,6 +8,15 @@
 #include "util.h"
 
 /*
+ * Computes the number of seconds between two timestamps.
+ */
+double seconds(const clock_t t1, const clock_t t0)
+{
+	return ((double) (t1 - t0)) / CLOCKS_PER_SEC;
+}
+
+
+/*
  * The maximum of two integers, used for clamping values etc.
  */
 int maximum(const int a, const int b)

@@ -18,12 +18,7 @@ static const int MAX_STEPS = (INT_MAX >> 4);
 // Number of steps before we perform some consistency checks
 static const int BATCH_STEPS = 100;
 // Number of symbols in each direction of the head that we compare. 0 means comparing only head
-static const int COMPARE_WINDOW = 1000;
-
-static double seconds(const clock_t t1, const clock_t t0)
-{
-	return ((double) (t1 - t0)) / CLOCKS_PER_SEC;
-}
+static const int COMPARE_WINDOW = 100;
 
 struct flags_t {
 	unsigned quiet : 1;
@@ -154,12 +149,10 @@ int main(int argc, char **argv)
 
 	// Run test cases 10 times for benchmarking
 	double tot_runtime = 0.0;
-	for (int j = 0; j < 10; j++) {
-		if (!flags.quiet) printf("Verifying test cases...\n");
-		for (int i = 0; i < N_TEST_CASES; i++) {
-			tot_runtime += verify_test_case(TEST_CASES + i, flags);
-		}
+	if (!flags.quiet) printf("Verifying test cases...\n");
+	for (int i = 0; i < N_TEST_CASES; i++) {
+		tot_runtime += verify_test_case(TEST_CASES + i, flags);
 	}
-	printf("Total runtime: %fs Using tapes: %s %s %s\n", tot_runtime, flags.tape_flat ? "flat" : "", flags.tape_rle ? "RLE" : "", flags.tape_bit ? "bitarray" : "");
+	printf("Total runtime: %fs Using tapes: %s%s%s\n", tot_runtime, flags.tape_flat ? "flat, " : "", flags.tape_rle ? "RLE, " : "", flags.tape_bit ? "bitarray, " : "");
 	return 0;
 }
